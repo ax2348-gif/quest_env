@@ -16,6 +16,7 @@ input. Use Meta to return input to XR. Release both grips once after startup.
 | Left / right index trigger | Continuously close that gripper |
 | Left stick | Forward/back and lateral base motion |
 | Right stick X | Base yaw |
+| A (both grips released) | Align operator forward to current headset facing, yaw only |
 | Y | Reset the demo pose/placement; release and re-grip to resume |
 | B held 2 seconds | Existing telemetry shutdown behavior |
 | `qr -s --base-frame=frozen` | Keep clutched targets in the captured world frame while base moves |
@@ -25,7 +26,7 @@ input. Use Meta to return input to XR. Release both grips once after startup.
 | q/Esc in viewer | Detach viewer; native app continues |
 
 The robot is **OpenArm-inspired**, with two 7-revolute-joint arms, bent starting
-postures, 30 cm upper arms and 28 cm forearms. It is a stylized demonstration,
+postures, 36 cm upper arms and 33.6 cm forearms (120% of the original arm scale). It is a stylized demonstration,
 not an exact OpenArm URDF or hardware calibration. All arm joints are limited to
 ±2.85 rad with a 2.5 rad/s kinematic step bound. Damped Jacobian IK tracks position
 and full orientation, with null-space posture/manipulability preference and a
@@ -34,18 +35,30 @@ and re-clutch. There are no dynamics, contact physics, scene meshes or real-worl
 collision checks.
 
 Cyan = left arm, amber = right. Tool axes: red X, green Y, blue Z. Small target
-frames appear while clutched. The base arrow shows robot forward. A virtual ground
-grid stays fixed as the robot moves. Placement is 1.6 m along fixed OpenXR LOCAL
--Z from the first tracked head position, with ground 1.6 m below that head
+frames appear while clutched. The base uses ideal four-module swerve kinematics: each wheel steers to its local
+velocity (including base yaw) and rolls at the corresponding signed speed.
+Steering takes the shorter turn, reversing wheel speed when appropriate.
+There are no tire forces or steering dynamics. The beveled chassis supports a
+15–18 cm diameter round mast, compared with 6.5 cm arm tubes.
+
+The base arrow shows robot forward. A virtual ground
+grid stays fixed as the robot moves. Placement is 1.6 m along the calibrated operator forward
+(default OpenXR LOCAL -Z) from the first tracked head position, with ground 1.6 m below that head
 position. This is a hypothetical floor, not detected AR ground. Y resets placement
-using the current head position but retains the fixed operator-front convention.
+using the current head position and calibrated operator heading. A changes the
+control mapping only: it does not rotate or teleport the existing robot/grid.
 A LOCAL reference-space change resets the demo and invalidates clutch anchors.
 
 ## Frame mapping
 
 Operator and robot bases use **X forward, Y left, Z up**. OpenXR LOCAL maps to
 operator coordinates through `C = [[0,0,-1],[-1,0,0],[0,1,0]]`. Neither headset yaw
-nor controller orientation defines operator front.
+nor controller orientation continuously redefines operator front. Press A with
+both grips released to capture headset yaw as the new forward direction, keeping
+up aligned with gravity. A is ignored while either clutch is engaged, while a
+grip is held, without tracked head pose, or when looking almost straight up/down.
+Rejected presses are not queued; release the grips and press A again. The setting
+is session-local and resets on native restart or LOCAL reference-space change.
 
 On each grip engagement, record controller pose `(p0, R0)` in operator base and
 measured EE pose `(e0, E0)` in robot base. During the engagement:
@@ -70,6 +83,8 @@ head/controller poses, buttons and tracking fields. It now also contains:
 
 - `control_intent`: schema `teleop.operator_intent.v1`, session ID,
   `frame: operator_base_flu`, `translation_limit_m`, `base_velocity` and `hands`.
+  `operator_from_quest` is the current 9-element row-major basis rotation and
+  `operator_frame_revision` increments on successful A realignment.
 - Each intent hand: `valid`, `engaged`, `needs_release`, `engagement_id`,
   `delta_position` (3 metres), `delta_rotation` (9 row-major matrix entries),
   and `gripper` (0 open–1 closed). Base velocity is robot-base forward/left m/s
@@ -91,7 +106,8 @@ make old engagement IDs obsolete. IDs are unique only within a provider session.
 A remote robot consumer must:
 
 1. Check frame arrival freshness on its own clock (recommended timeout 200 ms),
-   focus, command validity, session ID, and ordered `frame_seq`.
+   focus, command validity, session ID, operator-frame revision, and ordered `frame_seq`.
+   A changed revision invalidates saved EE anchors just like a changed session.
 2. On a fresh engagement, capture its **measured EE anchor** and robot base once.
    Apply the formula above, using the live/frozen base policy on the robot side.
 3. If attaching/reconnecting mid-engagement, wait for release and a new engagement;

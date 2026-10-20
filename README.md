@@ -372,7 +372,9 @@ reopening loop; it is not proof that such a loop occurred on the headset.
 
 Run `qp`, then `qr -s` for the immersive wireframe bimanual mobile manipulator.
 Each arm has 7 DOF; grips clutch independently, triggers close grippers, left
-stick translates and right stick X turns the base. Y resets the demo.
+stick translates and right stick X turns the swerve base. **A** realigns operator
+forward to headset yaw only when both grips are released; **Y** resets the demo.
+Arms are 120% of their original size; the mast is rounded and moderately slimmer.
 `qr -s --base-frame=frozen` freezes robot-base frames at clutch engagement; the
 default tracks the live base. Plain `qr` disables the demo.
 

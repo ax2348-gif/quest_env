@@ -94,6 +94,60 @@ int main(int argc, char **argv) {
     for (V axis : {V{1, 0, 0}, V{0, 1, 0}, unit(V{1, 2, 3})})
         assert(near(rotation(unit(logRotation(rotation(axis, pi))), norm(logRotation(rotation(axis, pi)))),
                     rotation(axis, pi), 1e-5));
+    // Re-align to headset yaw without changing gravity or accepting a held clutch.
+    {
+        Intent intent;
+        Hand left = hand(), right = hand();
+        Pose head{{0, 1.6, 0}, rotation({0, 1, 0}, -pi / 2) * rotation({1, 0, 0}, -.3)};
+        intent.update(77, true, left, right);
+        left.grip = .8;
+        intent.update(77, true, left, right);
+        M previous = intent.operatorFromQuest;
+        intent.update(77, true, left, right, false, &head, true);
+        assert(intent.operatorFrameRevision == 0 && near(previous, intent.operatorFromQuest));
+        assert(intent.hands[0].engaged); // A does not cancel an engaged clutch.
+        left.grip = 0;
+        intent.update(77, true, left, right);
+        intent.update(77, true, left, right, false, &head, true);
+        assert(intent.operatorFrameRevision == 1);
+        assert(near(intent.operatorFromQuest * V{1, 0, 0}, V{1, 0, 0}));
+        assert(near(intent.operatorFromQuest * V{0, 1, 0}, V{0, 0, 1}));
+        intent.update(77, true, left, right);
+        left.grip = .8;
+        intent.update(77, true, left, right);
+        left.pose.p.x = .12;
+        intent.update(77, true, left, right);
+        assert(near(intent.hands[0].delta, V{.12, 0, 0}));
+        left.grip = 0;
+        intent.update(77, true, left, right);
+        head.r = rotation({1, 0, 0}, pi / 2); // heading undefined when looking straight up
+        intent.update(77, true, left, right, false, &head, true);
+        assert(intent.operatorFrameRevision == 1);
+        intent.update(78, true, left, right);
+        assert(intent.operatorFrameRevision == 0 && near(intent.operatorFromQuest, questToBase()));
+    }
+    // Ideal swerve velocities match the rigid-base twist for translation and yaw.
+    {
+        Robot robot;
+        for (V twist : {V{.4, 0, 0}, V{0, .4, 0}, V{0, 0, .7}, V{.3, -.2, .5}, V{-.4, 0, 0}}) {
+            for (auto &wheel : robot.wheels) {
+                double before = wheel.phase;
+                wheel.update(twist, .01);
+                V actual{wheel.speed * std::cos(wheel.steering), wheel.speed * std::sin(wheel.steering), 0};
+                assert(
+                    near(actual, V{twist.x - twist.z * wheel.mount.y, twist.y + twist.z * wheel.mount.x, 0}));
+                assert(std::abs(std::remainder(
+                           wheel.phase - before + wheel.speed * .01 / SwerveModule::radius, 2 * pi)) < 1e-8);
+                double angle = wheel.steering, phase = wheel.phase;
+                wheel.update({}, .01);
+                assert(wheel.speed == 0 && wheel.steering == angle && wheel.phase == phase);
+            }
+        }
+        Arm arm;
+        auto chain = arm.fk(arm.q);
+        assert(std::abs(norm(chain.links[1] - chain.links[0]) - .36) < 1e-8);
+        assert(std::abs(norm(chain.links[2] - chain.links[1]) - .336) < 1e-8);
+    }
     // Analytic spatial Jacobian vs finite differences (position and orientation).
     for (int side : {1, -1}) {
         Arm a(side);

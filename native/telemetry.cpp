@@ -762,6 +762,7 @@ private:
     teleop::Intent operatorIntent_;
     teleop::Robot robot_;
     bool demoEnabled_ = false;
+    bool alignButtonDown_ = false;
     int64_t lastIntentSample_ = 0;
     XrPosef headPose_{}, leftPose_{}, rightPose_{};
     float frameHz_ = 0, inputMs_ = 0;
@@ -1278,8 +1279,13 @@ private:
             auto stick = getVec2(thumbstickAction_, hand);
             input[i].sx = stick.x; input[i].sy = stick.y;
         }
+        const bool alignButton = getBool(aButtonAction_);
+        const bool alignEdge = alignButton && !alignButtonDown_;
+        alignButtonDown_ = alignButton;
+        auto headForAlignment = DemoRenderer::pose(headPose_);
         operatorIntent_.update(providerSessionId_, sessionState_ == XR_SESSION_STATE_FOCUSED &&
-            actionSyncResult_ == XR_SUCCESS, input[0], input[1], gap);
+            actionSyncResult_ == XR_SUCCESS, input[0], input[1], gap,
+            headTracked_ ? &headForAlignment : nullptr, alignEdge);
         if (demoEnabled_) robot_.update(operatorIntent_, dt,
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
             getBool(yButtonAction_));

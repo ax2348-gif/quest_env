@@ -151,6 +151,7 @@ def view(stream):
                   'warn' if sync is not None and sync != 0 else ''))
     intent = sample.get('control_intent')
     if isinstance(intent, dict):
+        lines.append((f'Operator front #{intent.get("operator_frame_revision", 0)} | A: align facing (both grips released)', 'dim'))
         hands = intent.get('hands', {})
         for side in ('left', 'right'):
             c = hands.get(side, {}) if isinstance(hands, dict) else {}

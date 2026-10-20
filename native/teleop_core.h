@@ -123,7 +123,7 @@ struct Clutch {
         delta = {};
         deltaR = {};
     }
-    void update(const Hand &h, bool focused) {
+    void update(const Hand &h, bool focused, const M &operatorFromQuest = questToBase()) {
         valid = focused && h.valid && finite(h.pose) && std::isfinite(h.grip);
         if (!valid) {
             invalidate();
@@ -139,7 +139,7 @@ struct Clutch {
         }
         if (needsRelease)
             return;
-        Pose current = operatorPose(h.pose);
+        Pose current{operatorFromQuest * h.pose.p, operatorFromQuest * h.pose.r};
         if (!engaged && h.grip >= .6) {
             anchor = current;
             engaged = true;
@@ -161,18 +161,41 @@ struct Intent {
     int64_t session = 0;
     bool initialized = false;
     bool discontinuity = false;
-    void update(int64_t s, bool focused, const Hand &left, const Hand &right, bool gap = false) {
+    M operatorFromQuest = questToBase();
+    uint64_t operatorFrameRevision = 0;
+    bool realign(const Pose &head) {
+        if (hands[0].engaged || hands[1].engaged || !finite(head))
+            return false;
+        V forward = questToBase() * (head.r * V{0, 0, -1});
+        // Looking almost straight up/down does not define a reliable heading.
+        if (std::hypot(forward.x, forward.y) < .15)
+            return false;
+        operatorFromQuest = rotation({0, 0, 1}, -std::atan2(forward.y, forward.x)) * questToBase();
+        ++operatorFrameRevision;
+        for (auto &h : hands)
+            h.invalidate();
+        drive = {};
+        return true;
+    }
+    void update(int64_t s, bool focused, const Hand &left, const Hand &right, bool gap = false,
+                const Pose *head = nullptr, bool align = false) {
         discontinuity = !initialized || s != session;
         if (discontinuity || gap) {
             for (auto &h : hands)
                 h.invalidate();
         }
+        if (discontinuity) {
+            operatorFromQuest = questToBase();
+            operatorFrameRevision = 0;
+        }
         initialized = true;
         session = s;
-        hands[0].update(left, focused && !gap);
-        hands[1].update(right, focused && !gap);
+        bool aligned =
+            align && focused && !gap && left.grip <= .4 && right.grip <= .4 && head && realign(*head);
+        hands[0].update(left, focused && !gap && !aligned, operatorFromQuest);
+        hands[1].update(right, focused && !gap && !aligned, operatorFromQuest);
         drive = {};
-        if (focused && !gap) {
+        if (focused && !gap && !aligned) {
             if (hands[0].valid) {
                 drive.x = .45 * stick(left.sy);
                 drive.y = -.45 * stick(left.sx);
@@ -186,6 +209,7 @@ struct Intent {
 inline Pose target(const Clutch &c, const Pose &eeAnchor, const Pose &base) {
     return compose(base, {eeAnchor.p + c.delta, c.deltaR * eeAnchor.r});
 }
+constexpr double armScale = 1.2;
 using Q = std::array<double, 7>;
 struct Chain {
     Pose ee;
@@ -221,7 +245,7 @@ struct Arm {
             c.origins[i] = t.p;
             c.axes[i] = t.r * ax[i];
             t.r = t.r * rotation(ax[i], angles[i]);
-            t.p = t.p + t.r * offset[i];
+            t.p = t.p + t.r * (offset[i] * armScale);
             if (norm(offset[i]) > 0)
                 c.links.push_back(t.p);
         }
@@ -305,14 +329,15 @@ struct Arm {
         double result = 10;
         for (size_t i = 1; i < c.links.size(); i++) {
             result = std::min(result,
-                              segmentDistance(c.links[i - 1], c.links[i], {0, 0, .24}, {0, 0, 1.04}) - .14);
+                              segmentDistance(c.links[i - 1], c.links[i], {0, 0, .24}, {0, 0, 1.04}) - .13);
             for (size_t j = 1; j < other.links.size(); j++)
                 result = std::min(
-                    result,
-                    segmentDistance(c.links[i - 1], c.links[i], other.links[j - 1], other.links[j]) - .065);
+                    result, segmentDistance(c.links[i - 1], c.links[i], other.links[j - 1], other.links[j]) -
+                                .065 * armScale);
             for (size_t j = i + 2; j < c.links.size(); j++)
-                result = std::min(
-                    result, segmentDistance(c.links[i - 1], c.links[i], c.links[j - 1], c.links[j]) - .055);
+                result =
+                    std::min(result, segmentDistance(c.links[i - 1], c.links[i], c.links[j - 1], c.links[j]) -
+                                         .055 * armScale);
             result = std::min(result, std::min(c.links[i - 1].z, c.links[i].z) - .20);
         }
         return result;
@@ -386,15 +411,41 @@ struct Arm {
         rotError = norm(logRotation(goal.r * transpose(c.ee.r)));
     }
 };
+struct SwerveModule {
+    V mount;
+    double steering = 0, speed = 0, phase = 0;
+    static constexpr double radius = .11;
+    void update(V twist, double dt) {
+        V velocity{twist.x - twist.z * mount.y, twist.y + twist.z * mount.x, 0};
+        speed = norm(velocity);
+        if (speed < 1e-8) {
+            speed = 0;
+            return;
+        }
+        double desired = std::atan2(velocity.y, velocity.x);
+        double delta = std::remainder(desired - steering, 2 * pi);
+        if (std::abs(delta) > pi / 2) {
+            delta = std::remainder(delta + pi, 2 * pi);
+            speed = -speed;
+        }
+        steering = std::remainder(steering + delta, 2 * pi);
+        phase = std::remainder(phase - speed * dt / radius, 2 * pi);
+    }
+};
 struct Robot {
     Arm arms[2] = {Arm(1), Arm(-1)};
     Pose base;
+    std::array<SwerveModule, 4> wheels{
+        {{{.27, .27, 0}}, {{.27, -.27, 0}}, {{-.27, .27, 0}}, {{-.27, -.27, 0}}}};
     V ground;
     bool placed = false, frozenMode = false;
     int64_t session = 0;
     bool resetDown = false;
-    void reset(V head) {
-        base = {{head.x + 1.6, head.y, head.z - 1.6}, {}};
+    void reset(V head, M heading = {}) {
+        base = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
+        for (auto &wheel : wheels) {
+            wheel.steering = wheel.speed = wheel.phase = 0;
+        }
         ground = base.p;
         for (auto &a : arms)
             a.reset();
@@ -404,13 +455,13 @@ struct Robot {
         if (!placed || session != in.session) {
             placed = false;
             if (headValid)
-                reset(head);
+                reset(head, questToBase() * transpose(in.operatorFromQuest));
             session = in.session;
         }
         bool resetting = resetButton && !resetDown;
         resetDown = resetButton;
         if (resetting && headValid) {
-            reset(head);
+            reset(head, questToBase() * transpose(in.operatorFromQuest));
             for (int i = 0; i < 2; i++)
                 arms[i].seen = in.hands[i].id;
         }
@@ -434,7 +485,10 @@ struct Robot {
                 a.engaged = true;
             }
         }
-        base.p = base.p + base.r * V{in.drive.x * dt, in.drive.y * dt, 0};
+        for (auto &wheel : wheels)
+            wheel.update(in.drive, dt);
+        base.p = base.p +
+                 base.r * rotation({0, 0, 1}, in.drive.z * dt * .5) * V{in.drive.x * dt, in.drive.y * dt, 0};
         base.r = base.r * rotation({0, 0, 1}, in.drive.z * dt);
         for (int i = 0; i < 2; i++) {
             auto &a = arms[i];
@@ -460,6 +514,8 @@ inline void jsonIntent(std::ostream &o, const Intent &in) {
     o << "{\"schema\":\"teleop.operator_intent.v1\",\"session_id\":\"" << in.session
       << "\",\"frame\":\"operator_base_flu\",\"translation_limit_m\":0.45,\"base_velocity\":";
     jsonV(o, in.drive);
+    o << ",\"operator_frame_revision\":" << in.operatorFrameRevision << ",\"operator_from_quest\":";
+    jsonM(o, in.operatorFromQuest);
     o << ",\"hands\":{";
     for (int i = 0; i < 2; i++) {
         if (i)

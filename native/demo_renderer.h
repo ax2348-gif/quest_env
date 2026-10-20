@@ -89,19 +89,52 @@ class DemoRenderer {
             line(r.ground + V{-4, t, 0}, r.ground + V{4, t, 0}, {.12, .25, .22});
             line(r.ground + V{t, -4, 0}, r.ground + V{t, 4, 0}, {.12, .25, .22});
         }
-        box(compose(r.base, {{0, 0, .17}, {}}), {.34, .29, .13}, baseColor);
-        box(compose(r.base, {{-.08, 0, .66}, {}}), {.095, .12, .37}, baseColor);
+        // Beveled two-deck chassis, rather than a rectangular crate.
+        const V outline[8] = {{.34, .22, 0},   {.24, .32, 0},   {-.24, .32, 0}, {-.34, .22, 0},
+                              {-.34, -.22, 0}, {-.24, -.32, 0}, {.24, -.32, 0}, {.34, -.22, 0}};
+        for (int k = 0; k < 8; k++) {
+            for (double z : {.18, .28})
+                line(r.base.p + r.base.r * (outline[k] + V{0, 0, z}),
+                     r.base.p + r.base.r * (outline[(k + 1) % 8] + V{0, 0, z}), baseColor);
+            line(r.base.p + r.base.r * (outline[k] + V{0, 0, .18}),
+                 r.base.p + r.base.r * (outline[k] + V{0, 0, .28}), baseColor);
+        }
+        // Moderately slimmer mast: 15-18 cm diameter vs 6.5 cm arm tubes.
+        link(r.base.p + r.base.r * V{-.06, 0, .28}, r.base.p + r.base.r * V{-.06, 0, .47}, .09, baseColor);
+        link(r.base.p + r.base.r * V{-.06, 0, .47}, r.base.p + r.base.r * V{-.06, 0, 1.03}, .075, baseColor);
+        link(r.base.p + r.base.r * V{-.06, 0, .43}, r.base.p + r.base.r * V{-.06, 0, .49}, .095, baseColor);
+        link(r.base.p + r.base.r * V{-.06, 0, .99}, r.base.p + r.base.r * V{-.06, 0, 1.04}, .085, baseColor);
+        link(compose(r.base, {{-.06, 0, 1.03}, {}}).p, compose(r.base, {{0, 0, 1.03}, {}}).p, .055,
+             baseColor);
         link(compose(r.base, {{0, -.25, 1.03}, {}}).p, compose(r.base, {{0, .25, 1.03}, {}}).p, .055,
              baseColor);
-        for (int x : {-1, 1})
-            for (int y : {-1, 1}) {
-                Pose wheel = compose(r.base, {{x * .22, y * .3, .12}, rotation({1, 0, 0}, pi / 2)});
-                for (int i = 0; i < 16; i++) {
-                    double a = i * pi / 8, b = (i + 1) * pi / 8;
-                    line(wheel.p + wheel.r * V{.105 * std::cos(a), .105 * std::sin(a), 0},
-                         wheel.p + wheel.r * V{.105 * std::cos(b), .105 * std::sin(b), 0}, baseColor);
-                }
+        for (const auto &module : r.wheels) {
+            Pose steering = compose(r.base, {module.mount, rotation({0, 0, 1}, module.steering)});
+            V axle = steering.p + V{0, 0, SwerveModule::radius};
+            link(steering.p + V{0, 0, .22}, steering.p + V{0, 0, .31}, .045, baseColor);
+            for (int i = 0; i < 20; i++) {
+                double a = i * pi / 10, b = (i + 1) * pi / 10;
+                for (double side : {-.038, .038})
+                    line(axle + steering.r * V{SwerveModule::radius * std::cos(a), side,
+                                               SwerveModule::radius * std::sin(a)},
+                         axle + steering.r * V{SwerveModule::radius * std::cos(b), side,
+                                               SwerveModule::radius * std::sin(b)},
+                         baseColor);
             }
+            // Wheel spokes roll with signed module speed; the fork shows steering.
+            for (int i = 0; i < 4; i++) {
+                double a = module.phase + i * pi / 2;
+                for (double side : {-.038, .038})
+                    line(axle + steering.r * V{0, side, 0},
+                         axle + steering.r * V{.105 * std::cos(a), side, .105 * std::sin(a)}, baseColor);
+            }
+            link(axle + steering.r * V{0, -.05, 0}, axle + steering.r * V{0, .05, 0}, .02, baseColor);
+            for (int side : {-1, 1})
+                line(axle + steering.r * V{0, side * .05, 0}, axle + steering.r * V{0, side * .05, .14},
+                     baseColor);
+            line(steering.p + V{0, 0, .32}, steering.p + V{0, 0, .32} + steering.r * V{.10, 0, 0},
+                 {.25, .85, .6});
+        }
         V tip = r.base.p + r.base.r * V{.52, 0, .03};
         line(r.base.p + r.base.r * V{.25, 0, .03}, tip, {.3, 1, .5});
         for (int s : {-1, 1})
@@ -111,17 +144,18 @@ class DemoRenderer {
             auto c = a.fk(a.q);
             V color = i == 0 ? V{.15, .85, 1} : V{1, .62, .15};
             for (size_t j = 1; j < c.links.size(); j++)
-                link(r.base.p + r.base.r * c.links[j - 1], r.base.p + r.base.r * c.links[j], .027, color);
+                link(r.base.p + r.base.r * c.links[j - 1], r.base.p + r.base.r * c.links[j], .027 * armScale,
+                     color);
             for (int j = 0; j < 7; j++) {
                 Pose p{r.base.p + r.base.r * c.origins[j], r.base.r};
-                box(p, {.028, .028, .028}, color);
+                box(p, V{.028, .028, .028} * armScale, color);
             }
             Pose ee = compose(r.base, c.ee);
             axes(ee, .10);
-            box(ee, {.025, .055, .025}, color);
-            double spread = .012 + .045 * (1 - a.gripper);
+            box(ee, V{.025, .055, .025} * armScale, color);
+            double spread = (.012 + .045 * (1 - a.gripper)) * armScale;
             for (int s : {-1, 1})
-                box(compose(ee, {{.06, s * spread, 0}, {}}), {.04, .008, .018}, color);
+                box(compose(ee, {{.06 * armScale, s * spread, 0}, {}}), V{.04, .008, .018} * armScale, color);
             if (a.engaged) {
                 axes(a.targetWorld, .065);
                 box(a.targetWorld, {.015, .015, .015}, a.limited ? V{1, .15, .15} : V{.6, 1, .5});

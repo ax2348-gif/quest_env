@@ -93,7 +93,7 @@ public:
                     green(0.6f);
                     text(28, 106, "KINEMATIC DEMO - " + demoMode + " BASE", 2);
                     text(28, 134, "GRIPS CLUTCH  TRIGGERS GRIPPERS", 2);
-                    text(28, 162, "STICKS DRIVE/TURN  Y RESET DEMO", 2);
+                    text(28, 162, "STICKS DRIVE/TURN  A ALIGN  Y RESET", 2);
                 }
                 if (!focused) {
                     green(0.42f);
