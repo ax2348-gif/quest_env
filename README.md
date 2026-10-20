@@ -71,7 +71,7 @@ unavailable.
 The opaque panel is replaced by premultiplied-alpha green graphics over passthrough:
 
 - A title and shutdown hint stay for four seconds, then fade over two seconds.
-- A faint circular reticle with ruler ticks remains in the centre; it is a visual
+- A faint, small green plus crosshair remains in the centre; it is a visual
   activity indicator, not a targeting/control input.
 - Peripheral status shows head/controller tracking, stream connection, the XR
   predicted display rate, and input-poll elapsed time in milliseconds.
@@ -90,13 +90,18 @@ cancel hint appear during the hold. Releasing B or losing focus cancels it.
 SSH and terminal sessions survive; B remains part of the telemetry button data.
 Artwork updates at 10 Hz; layer poses and telemetry update on every XR frame.
 
-The native app no longer launches a terminal activity after gaining XR focus.
-That old behavior could immediately hand focus back to a panel. The TUI now runs
-in the invoking terminal without creating or foregrounding another activity.
-This removes that focus-stealing path, but controller behavior still needs
-on-device confirmation. The TUI exposes `XR: VISIBLE/FOCUSED/...` and action-sync
-status (`OK`, `NOT_FOCUSED`, or a result code) to distinguish OS focus from
-inactive controller actions. Inputs remain gated on XR focus and successful sync.
+After the first focused XR frame, the native app restores the most recent
+existing runtime terminal task via `ActivityManager.AppTask.moveToFront()`, once
+per launch. Entering immersive mode can hide that panel even though its shell
+and viewer keep running. This restoration reuses the existing activity and PTY;
+it never creates a new terminal. If there is no terminal task, nothing is opened.
+The restoration can transfer focus to the panel: use the Meta button to return
+to XR. Subsequent focus changes do not trigger another restoration.
+
+The TUI exposes `XR: VISIBLE/FOCUSED/...` and action-sync status (`OK`,
+`NOT_FOCUSED`, or a result code). Inputs remain gated on XR focus and successful
+sync. Actual panel visibility/focus must be checked on Quest; the host build
+cannot validate compositor behavior.
 
 The previous shutdown lifecycle fix remains: pump Android callbacks until
 APP_CMD_DESTROY and stop waiting for XR frames once finishing starts.

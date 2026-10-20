@@ -79,11 +79,9 @@ public:
                     text(368, 300, "HOLD B 2S TO STOP", 3);
                 }
                 green(focused ? 0.13f : 0.06f);
-                circle(512, 384, 28);
-                ticks(512, 384, 28, 12);
-                // Keep the centre open, with four tiny index marks.
-                rect(510, 343, 4, 5); rect(510, 420, 4, 5);
-                rect(471, 382, 5, 4); rect(548, 382, 5, 4);
+                // Minimal green plus, with an open centre; no persistent circle.
+                rect(511, 375, 2, 7); rect(511, 387, 2, 7);
+                rect(503, 383, 7, 2); rect(515, 383, 7, 2);
                 green(0.32f);
                 text(28, 674, "XR " + fixed(hz, 0) + " HZ", 2);
                 text(28, 702, "INPUT " + fixed(inputMs, 2) + " MS", 2);

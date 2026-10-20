@@ -405,6 +405,91 @@ bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     return result;
 }
 
+// Re-show the most recent existing terminal after entering immersive mode.
+// Reuse its Android task and PTY; never create a replacement terminal/session.
+void restoreTerminalTask(android_app* app) {
+    JNIEnv* env = nullptr;
+    JavaVM* vm = app->activity->vm;
+    bool detach = false;
+    jint status = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        detach = true;
+    } else if (status != JNI_OK || !env) return;
+    if (env->PushLocalFrame(128) != JNI_OK) {
+        env->ExceptionClear();
+        if (detach) vm->DetachCurrentThread();
+        return;
+    }
+    bool restored = false;
+    do {
+        jobject activity = app->activity->clazz;
+        jclass activityClass = env->GetObjectClass(activity);
+        jmethodID serviceMethod = env->GetMethodID(activityClass, "getSystemService",
+            "(Ljava/lang/String;)Ljava/lang/Object;");
+        if (env->ExceptionCheck() || !serviceMethod) break;
+        jobject manager = env->CallObjectMethod(activity, serviceMethod, env->NewStringUTF("activity"));
+        if (env->ExceptionCheck() || !manager) break;
+        jclass managerClass = env->GetObjectClass(manager);
+        jmethodID tasksMethod = env->GetMethodID(managerClass, "getAppTasks", "()Ljava/util/List;");
+        if (env->ExceptionCheck() || !tasksMethod) break;
+        jobject tasks = env->CallObjectMethod(manager, tasksMethod);
+        if (env->ExceptionCheck() || !tasks) break;
+        jclass listClass = env->GetObjectClass(tasks);
+        jmethodID sizeMethod = env->GetMethodID(listClass, "size", "()I");
+        jmethodID getMethod = env->GetMethodID(listClass, "get", "(I)Ljava/lang/Object;");
+        if (env->ExceptionCheck() || !sizeMethod || !getMethod) break;
+        jint count = env->CallIntMethod(tasks, sizeMethod);
+        if (env->ExceptionCheck()) break;
+        // Android returns app tasks most recent first. Limit work on the XR thread.
+        for (jint i = 0; i < count && i < 16; ++i) {
+            if (env->PushLocalFrame(16) != JNI_OK) break;
+            do {
+                jobject task = env->CallObjectMethod(tasks, getMethod, i);
+                if (env->ExceptionCheck() || !task) break;
+                jclass taskClass = env->GetObjectClass(task);
+                jmethodID infoMethod = env->GetMethodID(taskClass, "getTaskInfo",
+                    "()Landroid/app/ActivityManager$RecentTaskInfo;");
+                if (env->ExceptionCheck() || !infoMethod) break;
+                jobject info = env->CallObjectMethod(task, infoMethod);
+                if (env->ExceptionCheck() || !info) break;
+                jfieldID intentField = env->GetFieldID(env->GetObjectClass(info), "baseIntent",
+                    "Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !intentField) break;
+                jobject intent = env->GetObjectField(info, intentField);
+                if (!intent) break;
+                jmethodID componentMethod = env->GetMethodID(env->GetObjectClass(intent),
+                    "getComponent", "()Landroid/content/ComponentName;");
+                if (env->ExceptionCheck() || !componentMethod) break;
+                jobject component = env->CallObjectMethod(intent, componentMethod);
+                if (env->ExceptionCheck() || !component) break;
+                jmethodID nameMethod = env->GetMethodID(env->GetObjectClass(component),
+                    "getClassName", "()Ljava/lang/String;");
+                if (env->ExceptionCheck() || !nameMethod) break;
+                jstring name = static_cast<jstring>(env->CallObjectMethod(component, nameMethod));
+                if (env->ExceptionCheck() || !name) break;
+                const char* chars = env->GetStringUTFChars(name, nullptr);
+                if (!chars) break;
+                const bool terminal = strcmp(chars, "dev.quest.runtime.TerminalActivity") == 0;
+                env->ReleaseStringUTFChars(name, chars);
+                if (!terminal) break;
+                jmethodID frontMethod = env->GetMethodID(taskClass, "moveToFront", "()V");
+                if (env->ExceptionCheck() || !frontMethod) break;
+                env->CallVoidMethod(task, frontMethod);
+                restored = !env->ExceptionCheck();
+            } while (false);
+            bool failed = env->ExceptionCheck();
+            if (failed) env->ExceptionClear();
+            env->PopLocalFrame(nullptr);
+            if (restored || failed) break;
+        }
+    } while (false);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->PopLocalFrame(nullptr);
+    if (detach) vm->DetachCurrentThread();
+    LOGI("Existing terminal restoration: %s", restored ? "requested" : "no task or unavailable");
+}
+
 #include "status_panel.h"
 
 class QuestTelemetryApp {
@@ -612,6 +697,12 @@ public:
         endInfo.layerCount = static_cast<uint32_t>(layers.size());
         endInfo.layers = layers.empty() ? nullptr : layers.data();
         XR_CHECK(xrEndFrame(session_, &endInfo));
+        // Once per launch only: subsequent Meta-button focus changes must stay
+        // under user control. No task is created for headless/SSH-only launches.
+        if (!terminalRestored_ && focused && !finishing_) {
+            terminalRestored_ = true;
+            restoreTerminalTask(app_);
+        }
         if (held >= 1.0f && !finishing_) {
             LOGI("In-app shutdown requested by controller B hold");
             finishActivity(true);
@@ -628,6 +719,7 @@ private:
     XrResult actionSyncResult_ = XR_SESSION_NOT_FOCUSED;
     bool headTracked_ = false, leftTracked_ = false, rightTracked_ = false;
     bool finishing_ = false;
+    bool terminalRestored_ = false;
     int64_t shutdownHeldSince_ = 0;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId systemId_ = XR_NULL_SYSTEM_ID;
