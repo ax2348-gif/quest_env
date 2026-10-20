@@ -1,0 +1,42 @@
+#!/system/bin/sh
+# Invoke with `sh quest ...` on Android; also works with host sh for verification.
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+verify() {
+    [ -f "$ROOT/packages/$1/SHA256SUMS" ] || {
+        echo "No built $1 package. Build/package it on the development computer first." >&2
+        exit 1
+    }
+    (cd "$ROOT/packages/$1" && sha256sum -c SHA256SUMS)
+}
+case "${1:-help}" in
+    pull)
+        # Do not merge over edits or locally modified delivery artifacts.
+        [ -z "$(git -C "$ROOT" status --porcelain)" ] || {
+            echo "Working tree has local changes; commit or resolve them before pulling." >&2
+            exit 1
+        }
+        git -C "$ROOT" pull --ff-only
+        verify telemetry
+        echo "Updated and verified. Run: sh \"$ROOT/quest\" run"
+        ;;
+    verify) verify "${2:-telemetry}" ;;
+    run)
+        verify telemetry
+        exec quest-native run "$ROOT/packages/telemetry/libapp.so"
+        ;;
+    status) exec quest-native status ;;
+    stop) exec quest-native stop ;;
+    restart) exec quest-native restart ;;
+    builtin) exec quest-native builtin ;;
+    install-devtools)
+        verify devtools
+        expected="$(cd "$ROOT/packages/devtools" && sha256sum tools.tar.gz)"
+        exec sh "$ROOT/packages/devtools/install.sh" \
+            "$ROOT/packages/devtools/tools.tar.gz" "${expected%% *}"
+        ;;
+    *)
+        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools}"
+        echo "pull updates files only; run verifies and restarts only the native XR app."
+        ;;
+esac

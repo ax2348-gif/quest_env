@@ -1,0 +1,16 @@
+{
+  "name": "Quest telemetry",
+  "host_abi": 1,
+  "architecture": "android-arm64",
+  "minimum_api": 28,
+  "openxr_loader": "1.1.53",
+  "library_sha256": "1c796621e8f8d4e1c1320e9243489fd5e66dcccd0a898c534456cada9f8fd6d9",
+  "sources": {
+    "native/identity.c": "7254e24ef193afeb24a7a79255c9fc775aaa95b1090573efc0e6d19808ae175c",
+    "native/quest_native_app.h": "7178c1635f1a62b4229510b2dbaa58ae53cf43ccaa5eb516236100e3e724d6d3",
+    "native/telemetry.cpp": "121287dea132bcae963e0ccf0fae250765ab8ac675e17a62f24851a9d57e2ea6",
+    "tools/compile_native.py": "6c5994f6986a3ecbeff6a37e92cada17fca163b646a1a82040df934ead1a70f9",
+    "tools/deliver.py": "f9db0b4bf5b0b5b0c4d2d91b8b6f4a96b3d0fb4a87403347a408188418af0d8e"
+  },
+  "ndk": "Pkg.Desc = Android NDK\nPkg.Revision = 27.2.12479018\nPkg.BaseRevision = 27.2.12479018\nPkg.ReleaseName = r27c\n"
+}
