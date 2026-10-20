@@ -4,12 +4,12 @@
   "architecture": "android-arm64",
   "minimum_api": 28,
   "openxr_loader": "1.1.53",
-  "library_sha256": "b7fa91ba4a455ba90fcf5744fbb0ac12936b6ff8d0b7a7b30a600a1d6706be35",
+  "library_sha256": "4a684cd4ff393d95adce570074e60459b8b931f4d06c435f0ca5dadc28d7875f",
   "sources": {
     "native/identity.c": "7254e24ef193afeb24a7a79255c9fc775aaa95b1090573efc0e6d19808ae175c",
     "native/quest_native_app.h": "7178c1635f1a62b4229510b2dbaa58ae53cf43ccaa5eb516236100e3e724d6d3",
-    "native/status_panel.h": "eb1c4b5d84cc8242e3301c5c19a183a12066673998e3e35efd5aebf55e025158",
-    "native/telemetry.cpp": "b2ab30f5fd7bb7acd99da618e591720e92ab4e21115aec12b7ccf83ab5134f10",
+    "native/status_panel.h": "1709b09b561286a901e3ed58cd37ef3bc0765c31690e96b03257dc47801ee250",
+    "native/telemetry.cpp": "41386b78be37c1a30e5b306842bf0120aaa1fae5ea80bea932f7662f5f11397c",
     "tools/compile_native.py": "6c5994f6986a3ecbeff6a37e92cada17fca163b646a1a82040df934ead1a70f9",
     "tools/deliver.py": "f9db0b4bf5b0b5b0c4d2d91b8b6f4a96b3d0fb4a87403347a408188418af0d8e"
   },

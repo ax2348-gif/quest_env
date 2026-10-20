@@ -9,6 +9,35 @@ verify() {
     }
     (cd "$ROOT/packages/$1" && sha256sum -c SHA256SUMS)
 }
+launch() {
+    operation="$1"
+    shift
+    viewer=yes
+    for option in "$@"; do
+        case "$option" in
+            --no-viewer) viewer=no ;;
+            *) echo "Unknown option: $option (use --no-viewer)" >&2; exit 2 ;;
+        esac
+    done
+    # Noninteractive automation must not acquire a terminal or hang in curses.
+    if [ ! -t 0 ] || [ ! -t 1 ]; then viewer=no; fi
+    if [ "$viewer" = yes ]; then
+        command -v python3 >/dev/null 2>&1 || {
+            echo "Install Python: pkg install python; or use $operation --no-viewer" >&2
+            exit 1
+        }
+        python3 -c 'import curses' || exit 1
+    fi
+    if [ "$operation" = run ]; then
+        verify telemetry
+        quest-native run "$ROOT/packages/telemetry/libapp.so"
+    else
+        quest-native "$operation"
+    fi
+    if [ "$viewer" = yes ]; then
+        exec python3 "$ROOT/client/watch.py"
+    fi
+}
 case "${1:-help}" in
     pull)
         # Do not merge over edits or locally modified delivery artifacts.
@@ -36,14 +65,13 @@ case "${1:-help}" in
     erid-key) exec sh "$ROOT/ssh/key.sh" ;;
     install-profile) exec sh "$ROOT/shell/install-profile.sh" ;;
     verify) verify "${2:-telemetry}" ;;
-    run)
-        verify telemetry
-        exec quest-native run "$ROOT/packages/telemetry/libapp.so"
+    run|restart|builtin)
+        operation="$1"
+        shift
+        launch "$operation" "$@"
         ;;
     status) exec quest-native status ;;
     stop) exec quest-native stop ;;
-    restart) exec quest-native restart ;;
-    builtin) exec quest-native builtin ;;
     install-devtools)
         verify devtools
         expected="$(cd "$ROOT/packages/devtools" && sha256sum tools.tar.gz)"
@@ -52,6 +80,7 @@ case "${1:-help}" in
         ;;
     *)
         echo "Usage: sh quest {pull|watch [--host HOST --port PORT]|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
-        echo "pull updates files only; run verifies and restarts only the native XR app."
+        echo "run/restart/builtin show the viewer in this terminal; --no-viewer skips it."
+        echo "pull updates files only; run loads the updated native library."
         ;;
 esac

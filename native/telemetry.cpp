@@ -405,53 +405,6 @@ bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     return result;
 }
 
-// Launch the existing host terminal, preserving its persistent shell. Window
-// placement belongs to the Quest compositor, not the OpenXR reference space.
-bool openTerminalPanel(android_app* app) {
-    JavaVM* vm = app->activity->vm;
-    JNIEnv* env = nullptr;
-    bool detach = false;
-    const jint status = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
-    if (status == JNI_EDETACHED) {
-        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
-        detach = true;
-    } else if (status != JNI_OK || !env) {
-        return false;
-    }
-    bool launched = false;
-    if (env->PushLocalFrame(8) == JNI_OK) {
-        // Same URI and NEW_DOCUMENT semantics as TerminalActivity.open().
-        // NEW_TASK | NEW_DOCUMENT | LAUNCH_ADJACENT; never finish the XR task.
-        jclass intentClass = env->FindClass("android/content/Intent");
-        jmethodID parse = intentClass ? env->GetStaticMethodID(intentClass,
-            "parseUri", "(Ljava/lang/String;I)Landroid/content/Intent;") : nullptr;
-        if (parse && !env->ExceptionCheck()) {
-            jstring uri = env->NewStringUTF(
-                "quest-terminal://session/teleop#Intent;"
-                "component=dev.quest.runtime/.TerminalActivity;"
-                "launchFlags=0x10081000;end");
-            jobject intent = env->CallStaticObjectMethod(intentClass, parse, uri, 0);
-            if (intent && !env->ExceptionCheck()) {
-                jclass activityClass = env->GetObjectClass(app->activity->clazz);
-                jmethodID start = env->GetMethodID(activityClass, "startActivity",
-                    "(Landroid/content/Intent;)V");
-                if (start && !env->ExceptionCheck()) {
-                    env->CallVoidMethod(app->activity->clazz, start, intent);
-                    launched = !env->ExceptionCheck();
-                }
-            }
-        }
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        env->PopLocalFrame(nullptr);
-    } else if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
-    if (detach) vm->DetachCurrentThread();
-    if (launched) LOGI("Opened reusable teleop terminal panel");
-    else LOGW("Could not open terminal panel; telemetry continues");
-    return launched;
-}
-
 #include "status_panel.h"
 
 class QuestTelemetryApp {
@@ -482,7 +435,8 @@ public:
             return false;
         }
         createSpaces();
-        if (!panel_.init(session_)) return false;
+        if (!panel_.init(session_) || !leftMarker_.init(session_, true) ||
+            !rightMarker_.init(session_, true)) return false;
         createActions();
         createHandTrackers();
         LOGI("Quest telemetry native runtime initialized");
@@ -492,6 +446,8 @@ public:
     void shutdown() {
         controllerServer_.shutdown();
         panel_.shutdown();
+        leftMarker_.shutdown();
+        rightMarker_.shutdown();
         if (session_ != XR_NULL_HANDLE) {
             if (handTrackerLeft_ != XR_NULL_HANDLE && xrDestroyHandTrackerEXT_) {
                 xrDestroyHandTrackerEXT_(handTrackerLeft_);
@@ -603,6 +559,8 @@ public:
         // shouldRender controls composition only. Input sampling must continue
         // on every running frame so a compositor decision cannot silently
         // stall the teleoperation source.
+        frameHz_ = frameState.predictedDisplayPeriod > 0 ?
+            1e9f / static_cast<float>(frameState.predictedDisplayPeriod) : 0;
         if (!finishing_) updateTelemetry(frameState.predictedDisplayTime);
         const bool focused = sessionState_ == XR_SESSION_STATE_FOCUSED;
         const int64_t now = monotonicNs();
@@ -613,31 +571,47 @@ public:
         }
         const float held = shutdownHeldSince_ == 0 ? 0.0f :
             fminf(1.0f, static_cast<float>(now - shutdownHeldSince_) / 2000000000.0f);
+        XrPosef hudPose{};
+        hudPose.orientation.w = 1;
+        hudPose.position.z = -1.4f;
         bool showPanel = frameState.shouldRender && panel_.draw(
-            controllerFrameSeq_, headTracked_, leftTracked_, rightTracked_,
-            focused, controllerServer_.connected(), held);
-        auto panelLayer = panel_.layer(viewSpace_);
+            focused, headTracked_, leftTracked_, rightTracked_,
+            controllerServer_.connected(), held, frameHz_, inputMs_);
+        auto panelLayer = panel_.layer(viewSpace_, hudPose);
 
+        // Small view-facing markers follow tracked grips, not a controller mesh.
+        // OpenXR grip origins are not the exact physical thumbstick positions.
+        XrPosef leftMarkerPose = leftPose_, rightMarkerPose = rightPose_;
+        leftMarkerPose.orientation = rightMarkerPose.orientation = headPose_.orientation;
+        leftMarkerPose.position.y += 0.04f;
+        rightMarkerPose.position.y += 0.04f;
+        auto leftLayer = leftMarker_.layer(localSpace_, leftMarkerPose);
+        auto rightLayer = rightMarker_.layer(localSpace_, rightMarkerPose);
+        bool showLeft = frameState.shouldRender && focused && headTracked_ && leftTracked_ &&
+            leftMarker_.draw(true, true, true, true, true, 0, 0, 0,
+                            getFloat(gripValueAction_, leftHandPath_),
+                            getVec2(thumbstickAction_, leftHandPath_), 'L');
+        bool showRight = frameState.shouldRender && focused && headTracked_ && rightTracked_ &&
+            rightMarker_.draw(true, true, true, true, true, 0, 0, 0,
+                             getFloat(gripValueAction_, rightHandPath_),
+                             getVec2(thumbstickAction_, rightHandPath_), 'R');
         XrCompositionLayerPassthroughFB passthroughComposition{
             XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
         passthroughComposition.layerHandle = passthroughLayer_;
-        const XrCompositionLayerBaseHeader* layers[] = {
-            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughComposition),
-            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panelLayer),
-        };
+        std::vector<const XrCompositionLayerBaseHeader*> layers;
+        if (frameState.shouldRender) {
+            layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughComposition));
+            if (showPanel) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panelLayer));
+            if (showLeft) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&leftLayer));
+            if (showRight) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&rightLayer));
+        }
 
         XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
         endInfo.displayTime = frameState.predictedDisplayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        endInfo.layerCount = frameState.shouldRender ? (showPanel ? 2u : 1u) : 0u;
-        endInfo.layers = frameState.shouldRender ? layers : nullptr;
+        endInfo.layerCount = static_cast<uint32_t>(layers.size());
+        endInfo.layers = layers.empty() ? nullptr : layers.data();
         XR_CHECK(xrEndFrame(session_, &endInfo));
-        // Wait for the first focused, submitted XR frame. Attempt only once:
-        // closing the terminal or restoring XR focus must not reopen it.
-        if (!terminalLaunchAttempted_ && focused && !finishing_) {
-            terminalLaunchAttempted_ = true;
-            if (booleanIntentExtra(app_, "open_terminal", true)) openTerminalPanel(app_);
-        }
         if (held >= 1.0f && !finishing_) {
             LOGI("In-app shutdown requested by controller B hold");
             finishActivity(true);
@@ -647,10 +621,13 @@ public:
 private:
     android_app* app_ = nullptr;
     EglState egl_;
-    StatusPanel panel_;
+    StatusPanel panel_, leftMarker_, rightMarker_;
+    XrPosef headPose_{}, leftPose_{}, rightPose_{};
+    float frameHz_ = 0, inputMs_ = 0;
+    int64_t inputStarted_ = 0;
+    XrResult actionSyncResult_ = XR_SESSION_NOT_FOCUSED;
     bool headTracked_ = false, leftTracked_ = false, rightTracked_ = false;
     bool finishing_ = false;
-    bool terminalLaunchAttempted_ = false;
     int64_t shutdownHeldSince_ = 0;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId systemId_ = XR_NULL_SYSTEM_ID;
@@ -1037,7 +1014,7 @@ private:
     }
 
     bool getBool(XrAction action, XrPath hand = XR_NULL_PATH) {
-        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return false;
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED || actionSyncResult_ != XR_SUCCESS) return false;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -1049,7 +1026,7 @@ private:
     }
 
     bool getPoseActive(XrPath hand) {
-        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return false;
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED || actionSyncResult_ != XR_SUCCESS) return false;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = gripPoseAction_;
         info.subactionPath = hand;
@@ -1061,7 +1038,7 @@ private:
     }
 
     float getFloat(XrAction action, XrPath hand) {
-        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return 0.0f;
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED || actionSyncResult_ != XR_SUCCESS) return 0.0f;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -1073,7 +1050,7 @@ private:
     }
 
     XrVector2f getVec2(XrAction action, XrPath hand) {
-        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return {0.0f, 0.0f};
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED || actionSyncResult_ != XR_SUCCESS) return {0.0f, 0.0f};
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -1084,15 +1061,30 @@ private:
         return state.currentState;
     }
 
+    const char* sessionStateName() const {
+        switch (sessionState_) {
+            case XR_SESSION_STATE_IDLE: return "IDLE";
+            case XR_SESSION_STATE_READY: return "READY";
+            case XR_SESSION_STATE_SYNCHRONIZED: return "SYNCHRONIZED";
+            case XR_SESSION_STATE_VISIBLE: return "VISIBLE";
+            case XR_SESSION_STATE_FOCUSED: return "FOCUSED";
+            case XR_SESSION_STATE_STOPPING: return "STOPPING";
+            case XR_SESSION_STATE_LOSS_PENDING: return "LOSS_PENDING";
+            case XR_SESSION_STATE_EXITING: return "EXITING";
+            default: return "UNKNOWN";
+        }
+    }
+
     void updateTelemetry(XrTime time) {
+        inputStarted_ = monotonicNs();
         XrActiveActionSet activeSet{actionSet_, XR_NULL_PATH};
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;
         syncInfo.activeActionSets = &activeSet;
-        if (!XR_CHECK(xrSyncActions(session_, &syncInfo))) {
-            headTracked_ = leftTracked_ = rightTracked_ = false;
-            return;
-        }
+        actionSyncResult_ = xrSyncActions(session_, &syncInfo);
+        // XR_SESSION_NOT_FOCUSED is a positive result, not an error. Report
+        // it explicitly and publish inactive controls instead of stale values.
+        if (XR_FAILED(actionSyncResult_)) XR_CHECK(actionSyncResult_);
 
         emitControllerTelemetry(time);
         emitHandTelemetry(time);
@@ -1121,6 +1113,9 @@ private:
 
         const XrSpaceLocationFlags tracked = XR_SPACE_LOCATION_POSITION_TRACKED_BIT |
             XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+        headPose_ = headLocation.pose;
+        leftPose_ = leftLocation.pose;
+        rightPose_ = rightLocation.pose;
         headTracked_ = (headLocation.locationFlags & tracked) == tracked;
         leftTracked_ = leftValid && (leftLocation.locationFlags & tracked) == tracked;
         rightTracked_ = rightValid && (rightLocation.locationFlags & tracked) == tracked;
@@ -1149,11 +1144,16 @@ private:
             __android_log_print(ANDROID_LOG_INFO, kControllerLogTag, "%s", payload.c_str());
         }
 
+        inputMs_ = static_cast<float>(monotonicNs() - inputStarted_) / 1e6f;
         std::ostringstream json;
         json << "{\"schema\":\"" << kControllerSchema
              << "\",\"session_id\":\"" << providerSessionId_
              << "\",\"frame_seq\":" << controllerFrameSeq_++
              << ",\"sample_time_ns\":" << static_cast<int64_t>(time)
+             << ",\"xr_session_state\":\"" << sessionStateName() << "\""
+             << ",\"action_sync_result\":" << static_cast<int>(actionSyncResult_)
+             << ",\"xr_frame_hz\":" << fixed(frameHz_, 1)
+             << ",\"input_poll_ms\":" << fixed(inputMs_, 3)
              << ",\"input_focused\":"
              << (sessionState_ == XR_SESSION_STATE_FOCUSED ? "true" : "false")
              << ",\"reference_space\":\"local\",\"head\":{";

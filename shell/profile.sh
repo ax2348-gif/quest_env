@@ -27,19 +27,20 @@ cd "$QUEST_ENV_ROOT" || return
 
 q() { sh "$QUEST_ENV_ROOT/quest" "$@"; }
 qp() { q pull; }
-qr() { q run; }
+qr() { q run "$@"; }
 qs() { q stop; }
 qstatus() { q status; }
 qhelp() {
     printf '\n%s\n' "Quest workspace | ${QUEST_TERMUX_ACTIVE:+Termux }shell | telemetry starts manually"
     printf '%s\n' \
       '  qp / q pull        Pull updates, verify, install profile' \
-      '  qr / q run         Start updated telemetry' \
+      '  qr / q run         Start updated telemetry + viewer' \
+      '  qr --no-viewer     Start telemetry without the TUI' \
       '  qs / q stop        Stop telemetry; keep this terminal' \
       '  q watch            Live telemetry TUI (pkg install python once)' \
       '  qstatus            Native app status' \
-      '  q restart          Restart the selected native snapshot' \
-      '  q builtin          Start bundled fallback telemetry' \
+      '  q restart          Restart selected snapshot + viewer' \
+      '  q builtin          Start bundled fallback + viewer' \
       '  q verify           Check telemetry package checksums' \
       '  q install-profile  Reinstall this managed profile' \
       '  q install-devtools Install optional packaged CLI tools' \

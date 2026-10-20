@@ -1,7 +1,10 @@
-// Small head-relative OpenXR status panel. No font assets or Java UI required.
+// Transparent, premultiplied-alpha HUD and small controller markers.
 class StatusPanel {
 public:
-    bool init(XrSession session) {
+    bool init(XrSession session, bool controller = false) {
+        controllerMode = controller;
+        width = controller ? 192 : 1024;
+        height = controller ? 192 : 768;
         uint32_t count = 0;
         if (!XR_CHECK(xrEnumerateSwapchainFormats(session, 0, &count, nullptr))) return false;
         std::vector<int64_t> formats(count);
@@ -33,10 +36,12 @@ public:
         fbo = 0; swapchain = XR_NULL_HANDLE; ready = false;
     }
 
-    bool draw(uint64_t frames, bool head, bool left, bool right,
-              bool focused, bool connected, float hold) {
-        // Update at 10 Hz; the compositor reuses the released image between updates.
+    bool draw(bool focused, bool head, bool left, bool right, bool connected,
+              float hold, float hz, float inputMs, float grip = 0,
+              XrVector2f stick = {0, 0}, char side = 'L') {
         int64_t now = monotonicNs();
+        if (!born) born = now;
+        // Raster artwork updates at 10 Hz; layer poses still update every XR frame.
         if (ready && now - lastDraw < 100000000LL) return true;
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
         uint32_t index = 0;
@@ -51,22 +56,50 @@ public:
         if (complete) {
             glDisable(GL_SCISSOR_TEST);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-            glClearColor(0.025f, 0.04f, 0.065f, 1);
+            glClearColor(0, 0, 0, 0);
             glClear(GL_COLOR_BUFFER_BIT);
             glEnable(GL_SCISSOR_TEST);
-            color(0.9f, 0.95f, 1);
-            text(28, 24, "QUEST TELEMETRY", 5);
-            color(head && focused ? 0.25f : 1.0f, 0.8f, 0.4f);
-            text(28, 82, !focused ? "INPUT NOT FOCUSED" :
-                 head ? "COLLECTING - HEAD TRACKED" : "COLLECTING - HEAD UNTRACKED", 3);
-            color(0.7f, 0.8f, 0.9f);
-            text(28, 122, "FRAMES " + std::to_string(frames), 3);
-            text(28, 157, std::string("CONTROLLERS  L ") + (left ? "OK" : "--") +
-                 "  R " + (right ? "OK" : "--"), 3);
-            text(28, 192, connected ? "CLIENT CONNECTED" : "WAITING FOR CLIENT", 3);
-            color(1, 0.65f, 0.4f);
-            text(28, 244, "HOLD B 2 SECONDS TO SHUT DOWN", 3);
-            if (hold > 0) rect(28, 282, static_cast<int>(hold * 700), 10);
+            if (controllerMode) {
+                green(0.16f);
+                circle(96, 96, 65);
+                ticks(96, 96, 65, 12);
+                green(0.32f);
+                text(91, 21, std::string(1, side), 2);
+                // A thumbstick dot and a squeeze arc; no controller mesh or rays.
+                rect(94 + static_cast<int>(stick.x * 40),
+                     94 - static_cast<int>(stick.y * 40), 4, 4);
+                green(0.35f);
+                arc(96, 96, 72, fmaxf(0, fminf(1, grip)));
+            } else {
+                const float elapsed = static_cast<float>(now - born) / 1e9f;
+                const float fade = fmaxf(0, fminf(1, (6.0f - elapsed) / 2.0f));
+                if (fade > 0) {
+                    green(0.5f * fade);
+                    text(377, 264, "QUEST TELEMETRY", 3);
+                    text(368, 300, "HOLD B 2S TO STOP", 3);
+                }
+                green(focused ? 0.13f : 0.06f);
+                circle(512, 384, 28);
+                ticks(512, 384, 28, 12);
+                // Keep the centre open, with four tiny index marks.
+                rect(510, 343, 4, 5); rect(510, 420, 4, 5);
+                rect(471, 382, 5, 4); rect(548, 382, 5, 4);
+                green(0.32f);
+                text(28, 674, "XR " + fixed(hz, 0) + " HZ", 2);
+                text(28, 702, "INPUT " + fixed(inputMs, 2) + " MS", 2);
+                text(696, 674, std::string("H ") + (head ? "OK" : "--") +
+                     "  L " + (left ? "OK" : "--") + "  R " + (right ? "OK" : "--"), 2);
+                text(696, 702, connected ? "STREAM CONNECTED" : "STREAM WAITING", 2);
+                if (!focused) {
+                    green(0.42f);
+                    text(28, 54, "SYSTEM HAS INPUT FOCUS", 2);
+                }
+                if (hold > 0) {
+                    green(0.55f);
+                    text(368, 468, "RELEASE B TO CANCEL", 2);
+                    arc(512, 384, 36, hold);
+                }
+            }
             glDisable(GL_SCISSOR_TEST);
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -77,29 +110,48 @@ public:
         return ready;
     }
 
-    XrCompositionLayerQuad layer(XrSpace view) const {
+    XrCompositionLayerQuad layer(XrSpace space, XrPosef pose) const {
         XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        quad.space = view;
+        // Pixels are premultiplied; leave UNPREMULTIPLIED_ALPHA unset.
+        quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        quad.space = space;
         quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         quad.subImage.swapchain = swapchain;
         quad.subImage.imageRect.extent = {width, height};
-        quad.pose.orientation.w = 1;
-        quad.pose.position = {0, -0.22f, -1.25f};
-        quad.size = {0.84f, 0.35f};
+        quad.pose = pose;
+        quad.size = controllerMode ? XrExtent2Df{0.10f, 0.10f} : XrExtent2Df{1.6f, 1.2f};
         return quad;
     }
 
 private:
-    static constexpr int width = 768, height = 320;
+    int width = 1024, height = 768;
+    bool controllerMode = false;
     XrSwapchain swapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageOpenGLESKHR> images;
     GLuint fbo = 0;
     bool ready = false;
-    int64_t lastDraw = 0;
-    void color(float r, float g, float b) { glClearColor(r, g, b, 1); }
+    int64_t lastDraw = 0, born = 0;
+    void green(float alpha) { glClearColor(0.24f * alpha, 0.92f * alpha, 0.57f * alpha, alpha); }
     void rect(int x, int y, int w, int h) {
         glScissor(x, height - y - h, w, h);
         glClear(GL_COLOR_BUFFER_BIT);
+    }
+    void arc(int cx, int cy, int radius, float fraction) {
+        const int count = static_cast<int>(360 * fraction);
+        for (int degree = 0; degree < count; ++degree) {
+            float angle = degree * 0.01745329252f;
+            rect(cx + static_cast<int>(sinf(angle) * radius),
+                 cy - static_cast<int>(cosf(angle) * radius), 1, 1);
+        }
+    }
+    void circle(int cx, int cy, int radius) { arc(cx, cy, radius, 1); }
+    void ticks(int cx, int cy, int radius, int count) {
+        for (int i = 0; i < count; ++i) {
+            float angle = i * 6.28318530718f / count;
+            for (int r = radius + 3; r < radius + (i % 3 == 0 ? 9 : 6); ++r)
+                rect(cx + static_cast<int>(sinf(angle) * r),
+                     cy - static_cast<int>(cosf(angle) * r), 1, 1);
+        }
     }
     void text(int x, int y, const std::string& value, int scale) {
         // Five columns per glyph, least significant bit at the top.
@@ -120,10 +172,10 @@ private:
             {60,74,73,73,48},{1,113,9,5,3},{54,73,73,73,54},
             {6,73,73,41,30}
         };
-        static const uint8_t dash[5] = {8,8,8,8,8}, blank[5] = {};
+        static const uint8_t dash[5] = {8,8,8,8,8}, blank[5] = {}, dot[5] = {0,96,96,0,0}, slash[5] = {64,32,16,8,4};
         for (char c : value) {
             const uint8_t* glyph = c >= 'A' && c <= 'Z' ? letters[c-'A'] :
-                c >= '0' && c <= '9' ? digits[c-'0'] : c == '-' ? dash : blank;
+                c >= '0' && c <= '9' ? digits[c-'0'] : c == '-' ? dash : c == '.' ? dot : c == '/' ? slash : blank;
             for (int col = 0; col < 5; ++col)
                 for (int row = 0; row < 7; ++row)
                     if (glyph[col] & (1 << row))

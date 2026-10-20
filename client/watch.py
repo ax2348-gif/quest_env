@@ -122,6 +122,11 @@ def view(stream):
     lines.append((f'Focus: {"XR" if focus is True else "SYSTEM / TERMINAL" if focus is False else "unknown"}'
                   f' | space: {sample.get("reference_space", "?")} | invalid records: {stream.bad}',
                   'warn' if focus is False else ''))
+    sync = sample.get('action_sync_result')
+    sync_name = 'OK' if sync == 0 else 'NOT_FOCUSED' if sync == 8 else str(sync) if sync is not None else '?'
+    lines.append((f'XR: {sample.get("xr_session_state", "?")} | actions: {sync_name}'
+                  f' | poll {number(sample.get("input_poll_ms")):.2f} ms',
+                  'warn' if sync is not None and sync != 0 else ''))
     lines.append(('Meta button: return input focus to XR; viewer keeps updating.', ''))
     for name, item in [('HEAD', sample['head']), ('LEFT', sample['hands'].get('left', {})),
                        ('RIGHT', sample['hands'].get('right', {}))]:

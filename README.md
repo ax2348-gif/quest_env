@@ -66,33 +66,40 @@ Tracking still requires the Quest to be awake, focused on XR, and past any
 physical-button privacy lock. Shell/network access can work while tracking is
 unavailable.
 
-## In-headset status and shutdown
+## In-headset HUD and shutdown
 
-The telemetry app now displays a head-relative panel over passthrough:
+The opaque panel is replaced by premultiplied-alpha green graphics over passthrough:
 
-- QUEST TELEMETRY title, collection/focus status, and advancing sample frame count.
-- Head and left/right controller tracking status.
-- Whether a telemetry TCP client is connected (collection does not require one).
-- HOLD B 2 SECONDS TO SHUT DOWN, with a visible progress bar.
+- A title and shutdown hint stay for four seconds, then fade over two seconds.
+- A faint circular reticle with ruler ticks remains in the centre; it is a visual
+  activity indicator, not a targeting/control input.
+- Peripheral status shows head/controller tracking, stream connection, the XR
+  predicted display rate, and input-poll elapsed time in milliseconds.
+- Small view-facing rings follow the tracked controller grips, offset 4 cm up.
+  A dot shows thumbstick deflection and an arc shows grip/squeeze. These are
+  approximate controller markers, not calibrated physical thumbstick locations.
+  They disappear when tracking or XR focus is lost.
 
-Hold the right controller's B button continuously for two seconds while the app
-is focused. Releasing B or losing focus cancels the hold. Completion stops the
-telemetry server and finishes the XR activity; SSH and terminal sessions stay
-running. Start again with `sh quest run`. B remains present in the telemetry
-button data, so reserve this long-hold gesture when configuring teleoperation.
+`INPUT ... MS` measures elapsed time for action sync, pose reads and diagnostic
+formatting, before JSON serialization/socket sending. It is **not end-to-end
+latency**. `XR ... HZ` is derived from the runtime's predicted display period,
+not measured receiver throughput; the TUI separately reports receive rate.
 
-The panel refreshes at 10 Hz; telemetry continues sampling on each XR frame.
-The status panel was confirmed working on the headset. The first shutdown
-implementation caused repeated Android "not responding" dialogs: it exited the
-native worker on an OpenXR exit event before Android finished its synchronous
-lifecycle callbacks. The fix keeps processing Android callbacks until
-APP_CMD_DESTROY, and stops waiting for XR frames once shutdown starts. The same
-fix covers initialization failure. Compilation, native-host export/architecture
-checks and package checksums pass; shutdown needs another headset test.
+Hold right B for two seconds while focused to stop telemetry. A progress arc and
+cancel hint appear during the hold. Releasing B or losing focus cancels it.
+SSH and terminal sessions survive; B remains part of the telemetry button data.
+Artwork updates at 10 Hz; layer poses and telemetry update on every XR frame.
 
-If an older XR process is already stuck, run `quest-native stop` in the working
-terminal, then `sh quest pull` and `sh quest run`. This updates only the native
-library; no ADB or runtime APK update is needed.
+The native app no longer launches a terminal activity after gaining XR focus.
+That old behavior could immediately hand focus back to a panel. The TUI now runs
+in the invoking terminal without creating or foregrounding another activity.
+This removes that focus-stealing path, but controller behavior still needs
+on-device confirmation. The TUI exposes `XR: VISIBLE/FOCUSED/...` and action-sync
+status (`OK`, `NOT_FOCUSED`, or a result code) to distinguish OS focus from
+inactive controller actions. Inputs remain gated on XR focus and successful sync.
+
+The previous shutdown lifecycle fix remains: pump Android callbacks until
+APP_CMD_DESTROY and stop waiting for XR frames once finishing starts.
 
 ## Stop, restart, and recovery
 
@@ -243,40 +250,34 @@ private-key creation during pull. Actual Quest login awaits client-key enrollmen
 
 ## Terminal alongside telemetry
 
-`q run` now requests the existing runtime terminal panel after the first focused
-XR frame. It uses a stable `teleop` session identity: restarting telemetry reuses
-that terminal and shell rather than creating another each time. The shell follows
-the installed profile (Termux by default). Closing the panel does not reopen it
-until the next telemetry launch; closing telemetry leaves the terminal available.
-If you start telemetry from another terminal, that original terminal is preserved.
+`qr` / `q run`, `q restart`, and `q builtin` start the viewer in the **invoking
+terminal** after the native launch succeeds. They do not create a new terminal.
+`qr --no-viewer` (or `q run --no-viewer`) skips the viewer. The same flag works
+for restart/builtin. Noninteractive invocations skip it automatically. `qr`
+forwards its arguments after `qreload` or opening a fresh terminal.
 
-Quest owns system-panel placement. On first use, use its window controls to move
-and resize the terminal below your forward view, like a podium. This update does
-**not** set a 3D transform for the Android window or guarantee placement survives
-relaunches. Precisely positioning an embedded terminal requires additional host
-APK integration; this library uses the existing host TerminalActivity.
-
-While the terminal/system UI has input focus, controller actions report inactive,
-controller poses are null, and buttons/triggers/sticks report zero. The stream
-also includes `input_focused`; headset telemetry continues while XR is running.
-Return focus to the immersive app before using controllers for telemetry. A native
-launch intent can set boolean `open_terminal=false` to suppress automatic opening.
-
-After pulling, run `q restart` (or `q run` if stopped). Check that the terminal
-appears over passthrough, move it down, and check that returning to XR restores
-controller input. Restart once to check reuse. This behavior needs on-headset
-validation: if Horizon OS switches out of XR instead of showing an overlay, the
-host manifest needs the cooperative hybrid-app update. No ADB is required to
-pull this library; no host APK changes are bundled in this update.
-
+Quest owns panel placement. Use its window controls to place the terminal below
+the forward view like a podium. No system-window transform is forced. Use the
+Meta button to return input focus to XR; the viewer keeps updating while the
+terminal is unfocused. If XR stays unfocused, the new diagnostics show that
+explicitly rather than presenting inactive controllers as a tracking success.
 
 ## Terminal telemetry viewer
 
-Pull the update, then **run `q run`** to load the new library (restart alone
-reuses the previous snapshot). In the terminal:
+On Quest:
 
 ```sh
-pkg install python   # once, in Termux
+q pull
+qreload
+pkg install python   # once, in Termux; skip if already installed
+qr                   # load updated library, then show viewer here
+```
+
+Use **`q run` / `qr`** after pulling to select the updated library; `q restart`
+only restarts the previously selected snapshot. For separate control:
+
+```sh
+qr --no-viewer
 q watch
 ```
 
@@ -295,3 +296,12 @@ the native server still binds only to 127.0.0.1:9391. It now supports eight read
 so the TUI can coexist with teleop. Slow readers are disconnected independently
 rather than blocking XR; excess connections are closed. No recording or automatic
 telemetry startup is enabled by the viewer.
+
+
+Host validation for this update: Android ARM64 build/export/checksum checks;
+`test_launch.py` verifies TTY auto-viewer, opt-out, noninteractive invocation and
+failure behavior; `test_tui.py` verifies framing/reconnect/stale state and curses;
+`test_controller_server.py` verifies reader isolation. HUD rectangle rendering
+was inspected with a software capture of the actual drawing calls, including
+transparent backgrounds, premultiplied alpha and title fading. This does not
+replace checking compositor placement, readability and controller focus on Quest.
