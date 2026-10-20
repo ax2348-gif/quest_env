@@ -473,13 +473,17 @@ void restoreTerminalTask(android_app* app) {
                 const bool terminal = strcmp(chars, "dev.quest.runtime.TerminalActivity") == 0;
                 env->ReleaseStringUTFChars(name, chars);
                 if (!terminal) break;
-                // Moving the task to front can replace the immersive scene.
-                // Request an adjacent panel instead, retaining the exact URI
-                // used by TerminalActivity's intoExisting document task.
-                jmethodID addFlags = env->GetMethodID(env->GetObjectClass(intent),
-                    "addFlags", "(I)Landroid/content/Intent;");
-                if (env->ExceptionCheck() || !addFlags) break;
-                env->CallObjectMethod(intent, addFlags, 0x10081000);
+                // Keep the existing document URI/session, but remove an old
+                // LAUNCH_ADJACENT flag retained in the task's base intent.
+                // Merely omitting it from addFlags would preserve it on old tasks.
+                jclass intentClass = env->GetObjectClass(intent);
+                jmethodID getFlags = env->GetMethodID(intentClass, "getFlags", "()I");
+                jmethodID setFlags = env->GetMethodID(intentClass, "setFlags",
+                    "(I)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !getFlags || !setFlags) break;
+                jint flags = env->CallIntMethod(intent, getFlags);
+                if (env->ExceptionCheck()) break;
+                env->CallObjectMethod(intent, setFlags, (flags & ~0x00001000) | 0x10080000);
                 if (env->ExceptionCheck()) break;
                 jmethodID startActivity = env->GetMethodID(activityClass, "startActivity",
                     "(Landroid/content/Intent;)V");
