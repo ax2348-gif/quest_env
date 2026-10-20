@@ -17,9 +17,15 @@ case "${1:-help}" in
             exit 1
         }
         git -C "$ROOT" pull --ff-only
-        verify telemetry
-        echo "Updated and verified. Run: sh \"$ROOT/quest\" run"
+        # Re-enter the updated script rather than executing the old copy's logic.
+        exec sh "$ROOT/quest" _after-pull
         ;;
+    _after-pull)
+        verify telemetry
+        sh "$ROOT/shell/install-profile.sh"
+        echo "Updated. Telemetry has not been started. Use qr or sh quest run."
+        ;;
+    install-profile) exec sh "$ROOT/shell/install-profile.sh" ;;
     verify) verify "${2:-telemetry}" ;;
     run)
         verify telemetry
@@ -36,7 +42,7 @@ case "${1:-help}" in
             "$ROOT/packages/devtools/tools.tar.gz" "${expected%% *}"
         ;;
     *)
-        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools}"
+        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile}"
         echo "pull updates files only; run verifies and restarts only the native XR app."
         ;;
 esac

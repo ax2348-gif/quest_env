@@ -152,3 +152,51 @@ and the pull command refused local modifications. The existing Quest clone and
 runtime were inspected over SSH. USB disconnected before the Git pull/native
 launch test, and direct Tailscale SSH from erid timed out. End-to-end deployment
 of this delivery commit remains to be checked on the headset.
+
+## Default interactive environment and welcome
+
+New runtime terminals and interactive SSH logins automatically enter the installed
+`quest-termux` Bash environment. Telemetry is never started automatically. The
+profile changes directory to this checkout and prints a compact command guide.
+`qhelp` repeats it; `qp`, `qr`, `qs`, and `qstatus` update, run, stop, and inspect
+telemetry respectively. `pkg install NAME` and `pkg upgrade` manage Termux tools.
+
+Bootstrap from the older pull script:
+
+```sh
+cd ~/workspace/quest_env
+sh quest pull
+sh quest pull
+. "$HOME/.config/quest-env/profile.sh"
+```
+
+The first pull obtains the installer; the second installs the profile. Subsequent
+pulls re-enter the updated script and install the profile in the same invocation.
+After updating an existing shell, run `qreload` or open a new terminal to load new
+functions and the guide. Installation alone does not replace the current shell.
+
+Installation appends one managed hook to `~/.profile`, preserving its existing
+contents and keeping the first backup at
+`~/.config/quest-env/profile.before-quest-env`. The managed profile is copied into
+`~/.config/quest-env/profile.sh`; put personal additions in the optional
+`~/.config/quest-env/local.sh`. Do not edit the managed copy directly. The Termux
+handoff uses a dedicated Bash rcfile rather than modifying `~/.bashrc` or
+`~/.bash_profile`. Shared HOME and workspace are preserved. Noninteractive SSH
+commands and rsync do not enter Termux or print the welcome text.
+
+If Termux is not installed/ready, the profile stays in the normal runtime shell.
+Disable auto-entry from an existing shell (or a noninteractive SSH command) with:
+
+```sh
+touch "$HOME/.config/quest-env/no-termux"
+```
+
+Remove that file to enable it again. `QUEST_ENV_NO_TERMUX=1` also disables entry
+for a shell that inherits it. Exiting the Termux shell ends that terminal session;
+PRoot terminates its traced children, so don't use it for persistent daemons.
+
+Host-side validation: `python3 test_profile.py` checks installation preservation,
+idempotence, silent noninteractive startup, a single interactive Bash handoff,
+welcome/reload, recovery, and that no native app is launched. The handoff test
+uses a launcher stub; the installed Quest PRoot environment is tested on device
+by opening a new runtime terminal after pulling.
