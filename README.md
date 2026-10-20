@@ -91,7 +91,8 @@ SSH and terminal sessions survive; B remains part of the telemetry button data.
 Artwork updates at 10 Hz; layer poses and telemetry update on every XR frame.
 
 After the first focused XR frame, the native app restores the most recent
-existing runtime terminal using its original document intent with
+existing runtime terminal using a fresh ACTION_VIEW intent carrying only its
+component and document URI, with
 `NEW_TASK | NEW_DOCUMENT | LAUNCH_ADJACENT`, once per launch.
 `moveToFront()` was tried and caused a black immersive background on Quest;
 it is no longer used. Entering immersive mode can hide that panel even though its shell
@@ -330,8 +331,9 @@ Standalone `q watch` remains read-only: Ctrl-C exits only that viewer.
 
 ### Explicit XR focus recovery
 
-If Meta leaves `XR: VISIBLE | actions: NOT_FOCUSED`, press **f** in the viewer,
-or run `q focus` from a Quest terminal. This checks that an XR process exists
+`q focus` is a diagnostic only: it hides the CLI on the tested Quest and does
+not satisfy simultaneous terminal visibility and XR control. The viewer no
+longer advertises or binds the f shortcut. This checks that an XR process exists
 then uses `quest-launch` to resume `android.app.NativeActivity`, whose host
 manifest declares `singleTask`. It does not invoke `quest-native run/restart`,
 stop the process, or intentionally reset reference frames. The one-time panel
@@ -344,3 +346,17 @@ focus are still controlled by Horizon OS. If this fails, further changes belong
 in the host APK's hybrid/focus-aware activity configuration, not controller math.
 The viewer's f key is an explicit local UI-focus action; normal telemetry viewing
 and standalone viewer exit still do not start/stop the native app.
+
+
+### Panel intent regression investigation
+
+The launch path now constructs a fresh ACTION_VIEW intent with the terminal's
+existing document URI and exactly `NEW_TASK | NEW_DOCUMENT | LAUNCH_ADJACENT`,
+matching the earlier panel-launch construction. It no longer replays the saved
+base intent, which can carry unrelated task-launch context. This preserves the
+terminal session and does not resume XR in a way that hides the CLI.
+
+This is a targeted regression candidate, not a confirmed headset fix. The
+reported `NOT_FOCUSED` state comes from the runtime, not the controller gating
+code. Confirm both controller activity and continued panel visibility after
+switching focus with Meta. Host tests cannot establish Horizon compositor focus.

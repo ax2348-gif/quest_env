@@ -41,7 +41,7 @@ class Stream:
         self.frames = deque()
         self.status = 'Waiting for telemetry'
         self.bad = 0
-        self.notice = 'f: return focus to XR (without restarting telemetry)'
+        self.notice = 'Meta: switch input focus; keep this terminal visible.'
 
     def close(self):
         if self.sock:
@@ -205,11 +205,6 @@ def run(screen, stream):
         key = screen.getch()
         if key in (ord('q'), ord('Q'), 27):
             return
-        if key in (ord('f'), ord('F')):
-            if stream.address[0] not in ('127.0.0.1', 'localhost', '::1'):
-                stream.notice = 'Focus is a local Quest action; run q focus on Quest.'
-            else:
-                _, stream.notice = focus_xr()
         if key in (curses.KEY_DOWN, ord('j')):
             offset += 1
         elif key in (curses.KEY_UP, ord('k')):

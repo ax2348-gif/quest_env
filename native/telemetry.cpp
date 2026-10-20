@@ -443,7 +443,7 @@ void restoreTerminalTask(android_app* app) {
         if (env->ExceptionCheck()) break;
         // Android returns app tasks most recent first. Limit work on the XR thread.
         for (jint i = 0; i < count && i < 16; ++i) {
-            if (env->PushLocalFrame(16) != JNI_OK) break;
+            if (env->PushLocalFrame(32) != JNI_OK) break;
             do {
                 jobject task = env->CallObjectMethod(tasks, getMethod, i);
                 if (env->ExceptionCheck() || !task) break;
@@ -473,18 +473,39 @@ void restoreTerminalTask(android_app* app) {
                 const bool terminal = strcmp(chars, "dev.quest.runtime.TerminalActivity") == 0;
                 env->ReleaseStringUTFChars(name, chars);
                 if (!terminal) break;
-                // Moving the task to front can replace the immersive scene.
-                // Request an adjacent panel instead, retaining the exact URI
-                // used by TerminalActivity's intoExisting document task.
-                jmethodID addFlags = env->GetMethodID(env->GetObjectClass(intent),
-                    "addFlags", "(I)Landroid/content/Intent;");
-                if (env->ExceptionCheck() || !addFlags) break;
-                env->CallObjectMethod(intent, addFlags, 0x10081000);
+                // Match the original working panel-launch route: a fresh
+                // ACTION_VIEW intent, the same document URI, and exact flags.
+                // Do not replay a Home/recent-task intent's categories/extras.
+                jclass intentClass = env->GetObjectClass(intent);
+                jmethodID dataMethod = env->GetMethodID(intentClass, "getData",
+                    "()Landroid/net/Uri;");
+                if (env->ExceptionCheck() || !dataMethod) break;
+                jobject data = env->CallObjectMethod(intent, dataMethod);
+                if (env->ExceptionCheck() || !data) break;
+                jmethodID ctor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+                if (env->ExceptionCheck() || !ctor) break;
+                jobject panelIntent = env->NewObject(intentClass, ctor,
+                    env->NewStringUTF("android.intent.action.VIEW"));
+                if (env->ExceptionCheck() || !panelIntent) break;
+                jmethodID componentSetter = env->GetMethodID(intentClass, "setComponent",
+                    "(Landroid/content/ComponentName;)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !componentSetter) break;
+                env->CallObjectMethod(panelIntent, componentSetter, component);
+                if (env->ExceptionCheck()) break;
+                jmethodID dataSetter = env->GetMethodID(intentClass, "setData",
+                    "(Landroid/net/Uri;)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !dataSetter) break;
+                env->CallObjectMethod(panelIntent, dataSetter, data);
+                if (env->ExceptionCheck()) break;
+                jmethodID flagsSetter = env->GetMethodID(intentClass, "setFlags",
+                    "(I)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !flagsSetter) break;
+                env->CallObjectMethod(panelIntent, flagsSetter, 0x10081000);
                 if (env->ExceptionCheck()) break;
                 jmethodID startActivity = env->GetMethodID(activityClass, "startActivity",
                     "(Landroid/content/Intent;)V");
                 if (env->ExceptionCheck() || !startActivity) break;
-                env->CallVoidMethod(activity, startActivity, intent);
+                env->CallVoidMethod(activity, startActivity, panelIntent);
                 restored = !env->ExceptionCheck();
             } while (false);
             bool failed = env->ExceptionCheck();
