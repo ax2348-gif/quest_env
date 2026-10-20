@@ -236,6 +236,8 @@ public:
         }
     }
 
+    bool connected() const { return clientFd_ >= 0; }
+
     void shutdown() {
         closeClient();
         if (listenFd_ >= 0) {
@@ -398,6 +400,8 @@ bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     return result;
 }
 
+#include "status_panel.h"
+
 class QuestTelemetryApp {
 public:
     QuestTelemetryApp(android_app* app, bool enableHandTelemetry)
@@ -426,6 +430,7 @@ public:
             return false;
         }
         createSpaces();
+        if (!panel_.init(session_)) return false;
         createActions();
         createHandTrackers();
         LOGI("Quest telemetry native runtime initialized");
@@ -434,6 +439,7 @@ public:
 
     void shutdown() {
         controllerServer_.shutdown();
+        panel_.shutdown();
         if (session_ != XR_NULL_HANDLE) {
             if (handTrackerLeft_ != XR_NULL_HANDLE && xrDestroyHandTrackerEXT_) {
                 xrDestroyHandTrackerEXT_(handTrackerLeft_);
@@ -532,26 +538,51 @@ public:
         // shouldRender controls composition only. Input sampling must continue
         // on every running frame so a compositor decision cannot silently
         // stall the teleoperation source.
-        updateTelemetry(frameState.predictedDisplayTime);
+        if (!finishing_) updateTelemetry(frameState.predictedDisplayTime);
+        const bool focused = sessionState_ == XR_SESSION_STATE_FOCUSED;
+        const int64_t now = monotonicNs();
+        if (!finishing_ && focused && getBool(bButtonAction_)) {
+            if (shutdownHeldSince_ == 0) shutdownHeldSince_ = now;
+        } else {
+            shutdownHeldSince_ = 0;
+        }
+        const float held = shutdownHeldSince_ == 0 ? 0.0f :
+            fminf(1.0f, static_cast<float>(now - shutdownHeldSince_) / 2000000000.0f);
+        bool showPanel = frameState.shouldRender && panel_.draw(
+            controllerFrameSeq_, headTracked_, leftTracked_, rightTracked_,
+            focused, controllerServer_.connected(), held);
+        auto panelLayer = panel_.layer(viewSpace_);
 
         XrCompositionLayerPassthroughFB passthroughComposition{
             XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
         passthroughComposition.layerHandle = passthroughLayer_;
         const XrCompositionLayerBaseHeader* layers[] = {
             reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughComposition),
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panelLayer),
         };
 
         XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
         endInfo.displayTime = frameState.predictedDisplayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        endInfo.layerCount = frameState.shouldRender ? 1u : 0u;
+        endInfo.layerCount = frameState.shouldRender ? (showPanel ? 2u : 1u) : 0u;
         endInfo.layers = frameState.shouldRender ? layers : nullptr;
         XR_CHECK(xrEndFrame(session_, &endInfo));
+        if (held >= 1.0f && !finishing_) {
+            finishing_ = true;
+            LOGI("In-app shutdown requested by controller B hold");
+            controllerServer_.shutdown();
+            XR_CHECK(xrRequestExitSession(session_));
+            ANativeActivity_finish(app_->activity);
+        }
     }
 
 private:
     android_app* app_ = nullptr;
     EglState egl_;
+    StatusPanel panel_;
+    bool headTracked_ = false, leftTracked_ = false, rightTracked_ = false;
+    bool finishing_ = false;
+    int64_t shutdownHeldSince_ = 0;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId systemId_ = XR_NULL_SYSTEM_ID;
     XrSession session_ = XR_NULL_HANDLE;
@@ -985,7 +1016,10 @@ private:
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;
         syncInfo.activeActionSets = &activeSet;
-        XR_CHECK(xrSyncActions(session_, &syncInfo));
+        if (!XR_CHECK(xrSyncActions(session_, &syncInfo))) {
+            headTracked_ = leftTracked_ = rightTracked_ = false;
+            return;
+        }
 
         emitControllerTelemetry(time);
         emitHandTelemetry(time);
@@ -1009,6 +1043,12 @@ private:
             rightActive &&
             (rightLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
             (rightLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+
+        const XrSpaceLocationFlags tracked = XR_SPACE_LOCATION_POSITION_TRACKED_BIT |
+            XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+        headTracked_ = (headLocation.locationFlags & tracked) == tracked;
+        leftTracked_ = leftValid && (leftLocation.locationFlags & tracked) == tracked;
+        rightTracked_ = rightValid && (rightLocation.locationFlags & tracked) == tracked;
 
         // Keep the historical logcat surface for diagnostics during migration.
         std::ostringstream transforms;

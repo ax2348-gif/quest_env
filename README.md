@@ -66,6 +66,25 @@ Tracking still requires the Quest to be awake, focused on XR, and past any
 physical-button privacy lock. Shell/network access can work while tracking is
 unavailable.
 
+## In-headset status and shutdown
+
+The telemetry app now displays a head-relative panel over passthrough:
+
+- QUEST TELEMETRY title, collection/focus status, and advancing sample frame count.
+- Head and left/right controller tracking status.
+- Whether a telemetry TCP client is connected (collection does not require one).
+- HOLD B 2 SECONDS TO SHUT DOWN, with a visible progress bar.
+
+Hold the right controller's B button continuously for two seconds while the app
+is focused. Releasing B or losing focus cancels the hold. Completion stops the
+telemetry server and finishes the XR activity; SSH and terminal sessions stay
+running. Start again with `sh quest run`. B remains present in the telemetry
+button data, so reserve this long-hold gesture when configuring teleoperation.
+
+The panel refreshes at 10 Hz; telemetry continues sampling on each XR frame.
+This UI build passes compilation, native-host export/architecture checks, and
+package checksums. Its headset rendering and shutdown gesture need device testing.
+
 ## Stop, restart, and recovery
 
 ```sh
