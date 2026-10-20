@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as tmp:
         script = directory / name
         script.write_text('#!/bin/sh\n' + body + '\n')
         script.chmod(0o755)
-    env = dict(os.environ, PATH=str(directory)+':'+os.environ['PATH'], CALL_LOG=str(log))
+    env = dict(os.environ, HOME=str(directory), PATH=str(directory)+':'+os.environ['PATH'], CALL_LOG=str(log))
 
     def invoke(args, tty=True, failure=False):
         log.write_text('')
@@ -33,6 +33,9 @@ with tempfile.TemporaryDirectory() as tmp:
         else:
             proc = subprocess.run(['sh', str(ROOT/'quest'), *args], capture_output=True,
                                   env=settings, timeout=5)
+        request = directory / '.config/quest-env/restore-terminal-once'
+        expected_request = tty and not failure and '--no-viewer' not in args and '--typo' not in args
+        assert request.exists() == expected_request, (args, request.exists())
         return proc.returncode, log.read_text()
 
     for op in ('run', 'restart', 'builtin'):

@@ -443,7 +443,7 @@ void restoreTerminalTask(android_app* app) {
         if (env->ExceptionCheck()) break;
         // Android returns app tasks most recent first. Limit work on the XR thread.
         for (jint i = 0; i < count && i < 16; ++i) {
-            if (env->PushLocalFrame(32) != JNI_OK) break;
+            if (env->PushLocalFrame(16) != JNI_OK) break;
             do {
                 jobject task = env->CallObjectMethod(tasks, getMethod, i);
                 if (env->ExceptionCheck() || !task) break;
@@ -473,39 +473,18 @@ void restoreTerminalTask(android_app* app) {
                 const bool terminal = strcmp(chars, "dev.quest.runtime.TerminalActivity") == 0;
                 env->ReleaseStringUTFChars(name, chars);
                 if (!terminal) break;
-                // Match the original working panel-launch route: a fresh
-                // ACTION_VIEW intent, the same document URI, and exact flags.
-                // Do not replay a Home/recent-task intent's categories/extras.
-                jclass intentClass = env->GetObjectClass(intent);
-                jmethodID dataMethod = env->GetMethodID(intentClass, "getData",
-                    "()Landroid/net/Uri;");
-                if (env->ExceptionCheck() || !dataMethod) break;
-                jobject data = env->CallObjectMethod(intent, dataMethod);
-                if (env->ExceptionCheck() || !data) break;
-                jmethodID ctor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
-                if (env->ExceptionCheck() || !ctor) break;
-                jobject panelIntent = env->NewObject(intentClass, ctor,
-                    env->NewStringUTF("android.intent.action.VIEW"));
-                if (env->ExceptionCheck() || !panelIntent) break;
-                jmethodID componentSetter = env->GetMethodID(intentClass, "setComponent",
-                    "(Landroid/content/ComponentName;)Landroid/content/Intent;");
-                if (env->ExceptionCheck() || !componentSetter) break;
-                env->CallObjectMethod(panelIntent, componentSetter, component);
-                if (env->ExceptionCheck()) break;
-                jmethodID dataSetter = env->GetMethodID(intentClass, "setData",
-                    "(Landroid/net/Uri;)Landroid/content/Intent;");
-                if (env->ExceptionCheck() || !dataSetter) break;
-                env->CallObjectMethod(panelIntent, dataSetter, data);
-                if (env->ExceptionCheck()) break;
-                jmethodID flagsSetter = env->GetMethodID(intentClass, "setFlags",
-                    "(I)Landroid/content/Intent;");
-                if (env->ExceptionCheck() || !flagsSetter) break;
-                env->CallObjectMethod(panelIntent, flagsSetter, 0x10081000);
+                // Moving the task to front can replace the immersive scene.
+                // Request an adjacent panel instead, retaining the exact URI
+                // used by TerminalActivity's intoExisting document task.
+                jmethodID addFlags = env->GetMethodID(env->GetObjectClass(intent),
+                    "addFlags", "(I)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !addFlags) break;
+                env->CallObjectMethod(intent, addFlags, 0x10081000);
                 if (env->ExceptionCheck()) break;
                 jmethodID startActivity = env->GetMethodID(activityClass, "startActivity",
                     "(Landroid/content/Intent;)V");
                 if (env->ExceptionCheck() || !startActivity) break;
-                env->CallVoidMethod(activity, startActivity, panelIntent);
+                env->CallVoidMethod(activity, startActivity, intent);
                 restored = !env->ExceptionCheck();
             } while (false);
             bool failed = env->ExceptionCheck();
@@ -727,11 +706,22 @@ public:
         endInfo.layerCount = static_cast<uint32_t>(layers.size());
         endInfo.layers = layers.empty() ? nullptr : layers.data();
         XR_CHECK(xrEndFrame(session_, &endInfo));
-        // Once per launch only: subsequent Meta-button focus changes must stay
-        // under user control. No task is created for headless/SSH-only launches.
-        if (!terminalRestored_ && focused && !finishing_) {
-            terminalRestored_ = true;
-            restoreTerminalTask(app_);
+        // Only an explicit CLI launch can request panel restoration. Consume
+        // the request before calling Android so activity/process recreation
+        // cannot re-open the panel. XR focus transitions never re-arm this.
+        if (!terminalRestored_ && frameState.shouldRender && !finishing_ &&
+            now - lastPanelRequestCheck_ >= 100000000LL) {
+            lastPanelRequestCheck_ = now;
+            const char* files = app_->activity->internalDataPath;
+            if (files) {
+                const std::string request = std::string(files) +
+                    "/home/.config/quest-env/restore-terminal-once";
+                if (unlink(request.c_str()) == 0) {
+                    terminalRestored_ = true;
+                    LOGI("Consumed CLI terminal restore request");
+                    restoreTerminalTask(app_);
+                }
+            }
         }
         if (held >= 1.0f && !finishing_) {
             LOGI("In-app shutdown requested by controller B hold");
@@ -750,6 +740,7 @@ private:
     bool headTracked_ = false, leftTracked_ = false, rightTracked_ = false;
     bool finishing_ = false;
     bool terminalRestored_ = false;
+    int64_t lastPanelRequestCheck_ = 0;
     int64_t shutdownHeldSince_ = 0;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId systemId_ = XR_NULL_SYSTEM_ID;

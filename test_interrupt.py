@@ -22,7 +22,7 @@ if [ "$1" != stop ] && [ "${SLOW_START:-0}" = 1 ]; then
 fi
 ''')
     native.chmod(0o755)
-    env = dict(os.environ, PATH=str(directory)+':'+os.environ['PATH'],
+    env = dict(os.environ, HOME=str(directory), PATH=str(directory)+':'+os.environ['PATH'],
                CALL_LOG=str(log), TERM='xterm-256color')
 
     def check(args, expected, startup=False, key=b'\x03', expected_status=130):

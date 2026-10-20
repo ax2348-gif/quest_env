@@ -29,6 +29,8 @@ launch() {
         python3 -c 'import curses' || exit 1
     fi
     if [ "$operation" = run ]; then verify telemetry; fi
+    panel_request="$HOME/.config/quest-env/restore-terminal-once"
+    rm -f "$panel_request"
     if [ "$viewer" = yes ]; then
         # Keep a supervising shell: terminal SIGINT reaches this process and
         # its child. A pending trap runs after the foreground child returns.
@@ -40,6 +42,10 @@ launch() {
         quest-native "$operation"
     fi
     if [ "$viewer" = yes ]; then
+        # Request restoration only after the native launch completes. The XR
+        # process consumes this file atomically, including across recreation.
+        mkdir -p "$HOME/.config/quest-env"
+        (umask 077; : > "$panel_request")
         viewer_result=0
         QUEST_VIEWER_OWNS_TELEMETRY=1 python3 "$ROOT/client/watch.py" || viewer_result=$?
         # Also handle SIGINT delivered only to the viewer, not the whole group.
@@ -51,6 +57,7 @@ launch() {
 interrupt_launch() {
     # Ignore repeated Ctrl-C while the stop request is in flight.
     trap '' INT
+    rm -f "$HOME/.config/quest-env/restore-terminal-once"
     echo "Stopping telemetry..."
     if ! quest-native stop; then
         echo "Telemetry stop failed; retry with q stop." >&2
@@ -92,7 +99,9 @@ case "${1:-help}" in
         launch "$operation" "$@"
         ;;
     status) exec quest-native status ;;
-    stop) exec quest-native stop ;;
+    stop)
+        rm -f "$HOME/.config/quest-env/restore-terminal-once"
+        exec quest-native stop ;;
     install-devtools)
         verify devtools
         expected="$(cd "$ROOT/packages/devtools" && sha256sum tools.tar.gz)"
