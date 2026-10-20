@@ -268,3 +268,30 @@ controller input. Restart once to check reuse. This behavior needs on-headset
 validation: if Horizon OS switches out of XR instead of showing an overlay, the
 host manifest needs the cooperative hybrid-app update. No ADB is required to
 pull this library; no host APK changes are bundled in this update.
+
+
+## Terminal telemetry viewer
+
+Pull the update, then **run `q run`** to load the new library (restart alone
+reuses the previous snapshot). In the terminal:
+
+```sh
+pkg install python   # once, in Termux
+q watch
+```
+
+The standard-library Python/curses dashboard displays receive rate, sample age,
+XR input focus, headset and controller positions/rotation matrices, tracking
+validity, triggers, grips, sticks, and buttons. Poses are raw OpenXR LOCAL
+coordinates in metres, +Y up; R maps device axes into LOCAL. It is a read-only
+viewer, not a command source. Press the Meta button to restore XR input focus;
+the dashboard continues updating. `q`/Esc/Ctrl-C exits the viewer without stopping
+telemetry. Resize the terminal or use Up/Down (j/k) to scroll smaller windows.
+
+The client retries connections, marks samples stale after one second, and clears
+old poses on disconnect. UI refresh is 10 Hz while the socket drains full-rate
+samples. `q watch --host HOST --port PORT` can view an explicitly forwarded stream;
+the native server still binds only to 127.0.0.1:9391. It now supports eight readers,
+so the TUI can coexist with teleop. Slow readers are disconnected independently
+rather than blocking XR; excess connections are closed. No recording or automatic
+telemetry startup is enabled by the viewer.

@@ -210,7 +210,7 @@ public:
         addr.sin_port = htons(kControllerPort);
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
-            ::listen(fd, 1) != 0) {
+            ::listen(fd, 8) != 0) {
             LOGE("controller server bind/listen failed on %d: %s", kControllerPort, strerror(errno));
             close(fd);
             return false;
@@ -224,22 +224,30 @@ public:
 
     void sendLine(const std::string& payload) {
         acceptClient();
-        if (clientFd_ < 0) {
-            return;
-        }
         const std::string message = payload + "\n";
-        const ssize_t written = ::send(
-            clientFd_, message.data(), message.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (written < 0 || static_cast<size_t>(written) != message.size()) {
-            LOGW("controller TCP send failed or was partial: %s", strerror(errno));
-            closeClient();
+        for (int& fd : clients_) {
+            if (fd < 0) continue;
+            const ssize_t written = ::send(
+                fd, message.data(), message.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+            if (written < 0 || static_cast<size_t>(written) != message.size()) {
+                // A slow reader must never block XR or corrupt another reader's
+                // record boundaries. Drop it; clients reconnect independently.
+                close(fd);
+                fd = -1;
+            }
         }
     }
 
-    bool connected() const { return clientFd_ >= 0; }
+    bool connected() const {
+        for (int fd : clients_) if (fd >= 0) return true;
+        return false;
+    }
 
     void shutdown() {
-        closeClient();
+        for (int& fd : clients_) {
+            if (fd >= 0) close(fd);
+            fd = -1;
+        }
         if (listenFd_ >= 0) {
             close(listenFd_);
             listenFd_ = -1;
@@ -248,31 +256,28 @@ public:
 
 private:
     int listenFd_ = -1;
-    int clientFd_ = -1;
+    std::array<int, 8> clients_{{-1, -1, -1, -1, -1, -1, -1, -1}};
 
     void acceptClient() {
-        if (clientFd_ >= 0 || listenFd_ < 0) {
-            return;
-        }
-        int fd = accept(listenFd_, nullptr, nullptr);
-        if (fd < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                LOGW("controller TCP accept failed: %s", strerror(errno));
+        if (listenFd_ < 0) return;
+        // Bounded acceptance work per XR frame, including excess clients.
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            int fd = accept(listenFd_, nullptr, nullptr);
+            if (fd < 0) return;
+            int* slot = nullptr;
+            for (int& candidate : clients_) {
+                if (candidate < 0) { slot = &candidate; break; }
             }
-            return;
-        }
-        int one = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-        const int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        clientFd_ = fd;
-        LOGI("OpenXR controller TCP client connected");
-    }
-
-    void closeClient() {
-        if (clientFd_ >= 0) {
-            close(clientFd_);
-            clientFd_ = -1;
+            if (!slot) { close(fd); continue; }
+            int one = 1;
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            const int flags = fcntl(fd, F_GETFL, 0);
+            if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+                close(fd);
+                continue;
+            }
+            *slot = fd;
+            LOGI("OpenXR controller TCP reader connected");
         }
     }
 };

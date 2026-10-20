@@ -36,6 +36,7 @@ qhelp() {
       '  qp / q pull        Pull updates, verify, install profile' \
       '  qr / q run         Start updated telemetry' \
       '  qs / q stop        Stop telemetry; keep this terminal' \
+      '  q watch            Live telemetry TUI (pkg install python once)' \
       '  qstatus            Native app status' \
       '  q restart          Restart the selected native snapshot' \
       '  q builtin          Start bundled fallback telemetry' \

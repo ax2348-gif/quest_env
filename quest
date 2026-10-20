@@ -25,6 +25,14 @@ case "${1:-help}" in
         sh "$ROOT/shell/install-profile.sh"
         echo "Updated. Telemetry has not been started. Use qr or sh quest run."
         ;;
+    watch)
+        shift
+        command -v python3 >/dev/null 2>&1 || {
+            echo "Install Python in Termux first: pkg install python" >&2
+            exit 1
+        }
+        exec python3 "$ROOT/client/watch.py" "$@"
+        ;;
     erid-key) exec sh "$ROOT/ssh/key.sh" ;;
     install-profile) exec sh "$ROOT/shell/install-profile.sh" ;;
     verify) verify "${2:-telemetry}" ;;
@@ -43,7 +51,7 @@ case "${1:-help}" in
             "$ROOT/packages/devtools/tools.tar.gz" "${expected%% *}"
         ;;
     *)
-        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
+        echo "Usage: sh quest {pull|watch [--host HOST --port PORT]|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
         echo "pull updates files only; run verifies and restarts only the native XR app."
         ;;
 esac
