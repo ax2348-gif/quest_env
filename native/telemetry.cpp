@@ -400,6 +400,53 @@ bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     return result;
 }
 
+// Launch the existing host terminal, preserving its persistent shell. Window
+// placement belongs to the Quest compositor, not the OpenXR reference space.
+bool openTerminalPanel(android_app* app) {
+    JavaVM* vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    bool detach = false;
+    const jint status = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+        detach = true;
+    } else if (status != JNI_OK || !env) {
+        return false;
+    }
+    bool launched = false;
+    if (env->PushLocalFrame(8) == JNI_OK) {
+        // Same URI and NEW_DOCUMENT semantics as TerminalActivity.open().
+        // NEW_TASK | NEW_DOCUMENT | LAUNCH_ADJACENT; never finish the XR task.
+        jclass intentClass = env->FindClass("android/content/Intent");
+        jmethodID parse = intentClass ? env->GetStaticMethodID(intentClass,
+            "parseUri", "(Ljava/lang/String;I)Landroid/content/Intent;") : nullptr;
+        if (parse && !env->ExceptionCheck()) {
+            jstring uri = env->NewStringUTF(
+                "quest-terminal://session/teleop#Intent;"
+                "component=dev.quest.runtime/.TerminalActivity;"
+                "launchFlags=0x10081000;end");
+            jobject intent = env->CallStaticObjectMethod(intentClass, parse, uri, 0);
+            if (intent && !env->ExceptionCheck()) {
+                jclass activityClass = env->GetObjectClass(app->activity->clazz);
+                jmethodID start = env->GetMethodID(activityClass, "startActivity",
+                    "(Landroid/content/Intent;)V");
+                if (start && !env->ExceptionCheck()) {
+                    env->CallVoidMethod(app->activity->clazz, start, intent);
+                    launched = !env->ExceptionCheck();
+                }
+            }
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->PopLocalFrame(nullptr);
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    if (detach) vm->DetachCurrentThread();
+    if (launched) LOGI("Opened reusable teleop terminal panel");
+    else LOGW("Could not open terminal panel; telemetry continues");
+    return launched;
+}
+
 #include "status_panel.h"
 
 class QuestTelemetryApp {
@@ -580,6 +627,12 @@ public:
         endInfo.layerCount = frameState.shouldRender ? (showPanel ? 2u : 1u) : 0u;
         endInfo.layers = frameState.shouldRender ? layers : nullptr;
         XR_CHECK(xrEndFrame(session_, &endInfo));
+        // Wait for the first focused, submitted XR frame. Attempt only once:
+        // closing the terminal or restoring XR focus must not reopen it.
+        if (!terminalLaunchAttempted_ && focused && !finishing_) {
+            terminalLaunchAttempted_ = true;
+            if (booleanIntentExtra(app_, "open_terminal", true)) openTerminalPanel(app_);
+        }
         if (held >= 1.0f && !finishing_) {
             LOGI("In-app shutdown requested by controller B hold");
             finishActivity(true);
@@ -592,6 +645,7 @@ private:
     StatusPanel panel_;
     bool headTracked_ = false, leftTracked_ = false, rightTracked_ = false;
     bool finishing_ = false;
+    bool terminalLaunchAttempted_ = false;
     int64_t shutdownHeldSince_ = 0;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId systemId_ = XR_NULL_SYSTEM_ID;
@@ -978,6 +1032,7 @@ private:
     }
 
     bool getBool(XrAction action, XrPath hand = XR_NULL_PATH) {
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return false;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -989,6 +1044,7 @@ private:
     }
 
     bool getPoseActive(XrPath hand) {
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return false;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = gripPoseAction_;
         info.subactionPath = hand;
@@ -1000,6 +1056,7 @@ private:
     }
 
     float getFloat(XrAction action, XrPath hand) {
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return 0.0f;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -1011,6 +1068,7 @@ private:
     }
 
     XrVector2f getVec2(XrAction action, XrPath hand) {
+        if (sessionState_ != XR_SESSION_STATE_FOCUSED) return {0.0f, 0.0f};
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
         info.action = action;
         info.subactionPath = hand;
@@ -1045,6 +1103,8 @@ private:
 
         const bool leftActive = getPoseActive(leftHandPath_);
         const bool rightActive = getPoseActive(rightHandPath_);
+        if (!leftActive) leftLocation.locationFlags = 0;
+        if (!rightActive) rightLocation.locationFlags = 0;
         const bool leftValid =
             leftActive &&
             (leftLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
@@ -1089,6 +1149,8 @@ private:
              << "\",\"session_id\":\"" << providerSessionId_
              << "\",\"frame_seq\":" << controllerFrameSeq_++
              << ",\"sample_time_ns\":" << static_cast<int64_t>(time)
+             << ",\"input_focused\":"
+             << (sessionState_ == XR_SESSION_STATE_FOCUSED ? "true" : "false")
              << ",\"reference_space\":\"local\",\"head\":{";
         json << "\"position_valid\":";
         appendJsonBool(json, (headLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0);
@@ -1209,7 +1271,7 @@ private:
     }
 
     void emitHandTelemetry(XrTime time) {
-        if (!xrLocateHandJointsEXT_) {
+        if (!xrLocateHandJointsEXT_ || sessionState_ != XR_SESSION_STATE_FOCUSED) {
             return;
         }
         emitOneHand("Left", handTrackerLeft_, leftJoints_, time);

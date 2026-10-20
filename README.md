@@ -239,3 +239,32 @@ regenerate client keys or alter erid's server configuration.
 Validated on the build host: SSH config parsing, destination/account/strict host
 checking, idempotent installation, preservation of existing SSH entries and no
 private-key creation during pull. Actual Quest login awaits client-key enrollment.
+
+
+## Terminal alongside telemetry
+
+`q run` now requests the existing runtime terminal panel after the first focused
+XR frame. It uses a stable `teleop` session identity: restarting telemetry reuses
+that terminal and shell rather than creating another each time. The shell follows
+the installed profile (Termux by default). Closing the panel does not reopen it
+until the next telemetry launch; closing telemetry leaves the terminal available.
+If you start telemetry from another terminal, that original terminal is preserved.
+
+Quest owns system-panel placement. On first use, use its window controls to move
+and resize the terminal below your forward view, like a podium. This update does
+**not** set a 3D transform for the Android window or guarantee placement survives
+relaunches. Precisely positioning an embedded terminal requires additional host
+APK integration; this library uses the existing host TerminalActivity.
+
+While the terminal/system UI has input focus, controller actions report inactive,
+controller poses are null, and buttons/triggers/sticks report zero. The stream
+also includes `input_focused`; headset telemetry continues while XR is running.
+Return focus to the immersive app before using controllers for telemetry. A native
+launch intent can set boolean `open_terminal=false` to suppress automatic opening.
+
+After pulling, run `q restart` (or `q run` if stopped). Check that the terminal
+appears over passthrough, move it down, and check that returning to XR restores
+controller input. Restart once to check reuse. This behavior needs on-headset
+validation: if Horizon OS switches out of XR instead of showing an overlay, the
+host manifest needs the cooperative hybrid-app update. No ADB is required to
+pull this library; no host APK changes are bundled in this update.
