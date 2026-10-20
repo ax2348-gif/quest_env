@@ -43,11 +43,12 @@ In a runtime terminal, or after SSH into the Quest:
 cd ~/workspace/quest_env
 # Git installed in this runtime supports HTTPS; no outbound SSH client is bundled.
 git remote set-url origin https://github.com/ax2348-gif/quest_env.git
-sh quest pull
+git pull --ff-only  # First pull into the previously empty clone
 sh quest run
 sh quest status
 ```
 
+After this first pull, use `sh quest pull` for subsequent updates.
 Set the HTTPS remote once. Private repositories need your normal Git HTTPS
 authentication; do not commit tokens or put them into the remote URL.
 
@@ -114,3 +115,12 @@ telemetry. Keep the runtime's bundled fallback independent.
 Additional permissions, Java integration, or host ABI changes still need a
 runtime APK update. Arbitrary Linux/glibc binaries are not supported by this
 delivery mechanism. Only trusted developer code should run inside the runtime.
+
+## Initial validation
+
+The initial native library built successfully and passed ARM64/export checks.
+Checksums passed; a deliberately corrupted library was rejected before launch,
+and the pull command refused local modifications. The existing Quest clone and
+runtime were inspected over SSH. USB disconnected before the Git pull/native
+launch test, and direct Tailscale SSH from erid timed out. End-to-end deployment
+of this delivery commit remains to be checked on the headset.
