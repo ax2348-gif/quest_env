@@ -261,6 +261,16 @@ private-key creation during pull. Actual Quest login awaits client-key enrollmen
 
 ## Terminal alongside telemetry
 
+**Prerequisite: enable Seamless Multitasking in Quest Settings.** The user
+confirmed on 2026-10-20 that this fixes controller focus with the terminal
+visible. With it disabled, even a minimized panel can keep XR `NOT_FOCUSED`;
+closing the last panel restores input. After enabling it, use Meta to return
+input to XR while leaving the viewer visible.
+
+Validated combination: runtime APK 1.5.2 (version code 9), telemetry `3d1ca98`.
+The system menu's missing app name remains unresolved and did not prevent this
+working combination.
+
 `qr` / `q run`, `q restart`, and `q builtin` start the viewer in the **invoking
 terminal** after the native launch succeeds. They do not create a new terminal.
 `qr --no-viewer` (or `q run --no-viewer`) skips the viewer. The same flag works
