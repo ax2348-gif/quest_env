@@ -200,3 +200,42 @@ idempotence, silent noninteractive startup, a single interactive Bash handoff,
 welcome/reload, recovery, and that no native app is launched. The handoff test
 uses a launcher stub; the installed Quest PRoot environment is tested on device
 by opening a new runtime terminal after pulling.
+
+## SSH from Quest to erid
+
+`sh quest pull` now installs the `erid` SSH alias alongside the profile. It uses
+`adrianna@100.74.177.3:22` over the existing Tailscale connection. The pinned
+ED25519 server key was read directly from erid's `/etc/ssh` public key file:
+`SHA256:QjEKF0zOXp//U2kEAumvN+JjLJ6jRBKFdVojXAtNlK8`.
+Host verification is strict. Tailscale connectivity and sharing/ACL permissions
+must allow Quest-to-erid traffic. No new VPN or server settings are required.
+
+One-time setup in the Quest's Termux shell:
+
+```sh
+qp
+pkg install openssh    # Only if not already installed
+q erid-key
+```
+
+`q erid-key` creates `~/.ssh/id_ed25519_erid` only when neither key file exists.
+Choose a passphrase at the prompt; the command prints only its public key.
+Send that public key to erid's administrator to append to the `adrianna`
+account's `~/.ssh/authorized_keys`. Erid currently offers public-key login only,
+so the alias cannot log in before this enrollment. Keep the private key on Quest.
+Once authorized:
+
+```sh
+ssh erid
+```
+
+The profile welcome includes these commands after `qreload`. The installer adds
+one Include line at the beginning of `~/.ssh/config`, backs up any previous
+configuration to `~/.ssh/config.before-quest-env`, and maintains separate
+`quest-env.conf` and `quest-env-known_hosts` files. Other host entries are kept;
+this managed alias takes precedence for the name `erid`. Repeated pulls do not
+regenerate client keys or alter erid's server configuration.
+
+Validated on the build host: SSH config parsing, destination/account/strict host
+checking, idempotent installation, preservation of existing SSH entries and no
+private-key creation during pull. Actual Quest login awaits client-key enrollment.

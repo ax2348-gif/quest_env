@@ -1,0 +1,14 @@
+Host erid
+    HostName 100.74.177.3
+    User adrianna
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519_erid
+    IdentitiesOnly yes
+    UserKnownHostsFile ~/.ssh/quest-env-known_hosts
+    StrictHostKeyChecking yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    ConnectTimeout 10
+
+# Do not let this host section affect later entries in the caller's config.
+Host *

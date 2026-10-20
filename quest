@@ -25,6 +25,7 @@ case "${1:-help}" in
         sh "$ROOT/shell/install-profile.sh"
         echo "Updated. Telemetry has not been started. Use qr or sh quest run."
         ;;
+    erid-key) exec sh "$ROOT/ssh/key.sh" ;;
     install-profile) exec sh "$ROOT/shell/install-profile.sh" ;;
     verify) verify "${2:-telemetry}" ;;
     run)
@@ -42,7 +43,7 @@ case "${1:-help}" in
             "$ROOT/packages/devtools/tools.tar.gz" "${expected%% *}"
         ;;
     *)
-        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile}"
+        echo "Usage: sh quest {pull|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
         echo "pull updates files only; run verifies and restarts only the native XR app."
         ;;
 esac

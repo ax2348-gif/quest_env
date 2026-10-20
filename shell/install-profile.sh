@@ -25,5 +25,6 @@ if ! grep -qF "$marker" "$HOME/.profile" 2>/dev/null; then
     fi
     printf '\n%s\n%s\n' "$marker" "$hook" >> "$HOME/.profile"
 fi
+sh "$ROOT/ssh/install.sh"
 echo 'Profile installed. New interactive terminals enter Termux automatically.'
 echo 'Apply here: . "$HOME/.config/quest-env/profile.sh"'

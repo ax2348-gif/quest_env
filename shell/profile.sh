@@ -42,6 +42,8 @@ qhelp() {
       '  q verify           Check telemetry package checksums' \
       '  q install-profile  Reinstall this managed profile' \
       '  q install-devtools Install optional packaged CLI tools' \
+      '  ssh erid           Connect to erid as adrianna' \
+      '  q erid-key         Create/show Quest public key for erid' \
       '  pkg install NAME   Install a Termux package' \
       '  pkg upgrade        Update Termux packages' \
       '  qreload            Reload profile in this shell' \
