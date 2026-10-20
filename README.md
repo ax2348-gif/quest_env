@@ -82,8 +82,17 @@ running. Start again with `sh quest run`. B remains present in the telemetry
 button data, so reserve this long-hold gesture when configuring teleoperation.
 
 The panel refreshes at 10 Hz; telemetry continues sampling on each XR frame.
-This UI build passes compilation, native-host export/architecture checks, and
-package checksums. Its headset rendering and shutdown gesture need device testing.
+The status panel was confirmed working on the headset. The first shutdown
+implementation caused repeated Android "not responding" dialogs: it exited the
+native worker on an OpenXR exit event before Android finished its synchronous
+lifecycle callbacks. The fix keeps processing Android callbacks until
+APP_CMD_DESTROY, and stops waiting for XR frames once shutdown starts. The same
+fix covers initialization failure. Compilation, native-host export/architecture
+checks and package checksums pass; shutdown needs another headset test.
+
+If an older XR process is already stuck, run `quest-native stop` in the working
+terminal, then `sh quest pull` and `sh quest run`. This updates only the native
+library; no ADB or runtime APK update is needed.
 
 ## Stop, restart, and recovery
 

@@ -477,7 +477,19 @@ public:
     }
 
     bool sessionRunning() const {
-        return sessionRunning_;
+        // Once finishing, only pump Android/OpenXR events. Do not block in
+        // xrWaitFrame while Android is synchronously waiting for pause/stop.
+        return sessionRunning_ && !finishing_;
+    }
+
+    void finishActivity(bool requestXrExit = false) {
+        if (finishing_) return;
+        finishing_ = true;
+        controllerServer_.shutdown();
+        if (requestXrExit && sessionRunning_) XR_CHECK(xrRequestExitSession(session_));
+        ANativeActivity_finish(app_->activity);
+        // finish() is asynchronous. native_app_glue owns destroyRequested;
+        // keep servicing its command pipe until APP_CMD_DESTROY arrives.
     }
 
     void pollEvents() {
@@ -500,7 +512,8 @@ public:
                     XR_CHECK(xrEndSession(session_));
                 } else if (sessionState_ == XR_SESSION_STATE_EXITING ||
                            sessionState_ == XR_SESSION_STATE_LOSS_PENDING) {
-                    app_->destroyRequested = 1;
+                    sessionRunning_ = false;
+                    finishActivity();
                 }
             } else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
                 const auto* change =
@@ -568,11 +581,8 @@ public:
         endInfo.layers = frameState.shouldRender ? layers : nullptr;
         XR_CHECK(xrEndFrame(session_, &endInfo));
         if (held >= 1.0f && !finishing_) {
-            finishing_ = true;
             LOGI("In-app shutdown requested by controller B hold");
-            controllerServer_.shutdown();
-            XR_CHECK(xrRequestExitSession(session_));
-            ANativeActivity_finish(app_->activity);
+            finishActivity(true);
         }
     }
 
@@ -1272,19 +1282,19 @@ void android_main(android_app* app) {
         app, "enable_hand_telemetry", false);
     LOGI("optional hand telemetry enabled=%d", enableHandTelemetry ? 1 : 0);
     QuestTelemetryApp telemetry(app, enableHandTelemetry);
-    if (!telemetry.init()) {
-        LOGE("Quest telemetry failed to initialize; returning to the system shell");
-        telemetry.shutdown();
-        ANativeActivity_finish(app->activity);
-        return;
+    const bool initialized = telemetry.init();
+    if (!initialized) {
+        LOGE("Quest telemetry failed to initialize; finishing Android activity");
+        telemetry.finishActivity();
     }
 
     while (!app->destroyRequested) {
         android_poll_source* source = nullptr;
         int events = 0;
-        const int timeoutMs = telemetry.sessionRunning() ? 0 : 100;
+        int timeoutMs = telemetry.sessionRunning() ? 0 : 100;
         while (ALooper_pollOnce(timeoutMs, nullptr, &events, reinterpret_cast<void**>(&source)) >=
                0) {
+            timeoutMs = 0; // Drain queued callbacks without waiting again.
             if (source != nullptr) {
                 source->process(app, source);
             }
@@ -1292,11 +1302,16 @@ void android_main(android_app* app) {
                 break;
             }
         }
+        if (app->destroyRequested) break;
+        if (!initialized) continue;
         telemetry.pollEvents();
         if (telemetry.sessionRunning()) {
             telemetry.frame();
         }
     }
 
+    // Android has delivered APP_CMD_DESTROY. It is now safe for the worker
+    // to tear down XR and return, acknowledging native_app_glue destruction.
     telemetry.shutdown();
+    LOGI("Telemetry activity destruction complete");
 }
