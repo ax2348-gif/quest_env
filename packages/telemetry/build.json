@@ -4,12 +4,14 @@
   "architecture": "android-arm64",
   "minimum_api": 28,
   "openxr_loader": "1.1.53",
-  "library_sha256": "80deb41f09da9151792fbe969336ff2fcacb03b76f81a44226944664f6d01c58",
+  "library_sha256": "b56aa6b1b1e62a7854110e9787b8916bd37440f4eed976c5c459234981f4c60a",
   "sources": {
+    "native/demo_renderer.h": "214e8c7db9580683a891c0268c7b08cb3766e82e06beabd70080c3296b31de63",
     "native/identity.c": "7254e24ef193afeb24a7a79255c9fc775aaa95b1090573efc0e6d19808ae175c",
     "native/quest_native_app.h": "7178c1635f1a62b4229510b2dbaa58ae53cf43ccaa5eb516236100e3e724d6d3",
-    "native/status_panel.h": "5642d6cdf4dc7020b769fa63933de098a29139163952caaca46e9c765eb2760f",
-    "native/telemetry.cpp": "244365e34f389645a60f69f02f19eefe7dd74d9b9ae91cd7bb37d0156697bbdf",
+    "native/status_panel.h": "3d9f1dde051a116586bad1db89fbcf41629fcf35d64e5180912272285fe598dd",
+    "native/telemetry.cpp": "458571e4a195ac5d403a2eb05f46c3b8ffb4e0465ec42e047c049d31dd0036f4",
+    "native/teleop_core.h": "e1a7ce5fe43a2157adddf9dc4251e7051d971105571b879f5de204e68a822302",
     "tools/compile_native.py": "6c5994f6986a3ecbeff6a37e92cada17fca163b646a1a82040df934ead1a70f9",
     "tools/deliver.py": "f9db0b4bf5b0b5b0c4d2d91b8b6f4a96b3d0fb4a87403347a408188418af0d8e"
   },

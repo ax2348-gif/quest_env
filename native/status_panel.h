@@ -1,6 +1,7 @@
 // Transparent, premultiplied-alpha HUD and small controller markers.
 class StatusPanel {
 public:
+    std::string demoMode;
     bool init(XrSession session, bool controller = false) {
         controllerMode = controller;
         width = controller ? 192 : 1024;
@@ -88,6 +89,12 @@ public:
                 text(696, 674, std::string("H ") + (head ? "OK" : "--") +
                      "  L " + (left ? "OK" : "--") + "  R " + (right ? "OK" : "--"), 2);
                 text(696, 702, connected ? "STREAM CONNECTED" : "STREAM WAITING", 2);
+                if (!demoMode.empty()) {
+                    green(0.6f);
+                    text(28, 106, "KINEMATIC DEMO - " + demoMode + " BASE", 2);
+                    text(28, 134, "GRIPS CLUTCH  TRIGGERS GRIPPERS", 2);
+                    text(28, 162, "STICKS DRIVE/TURN  Y RESET DEMO", 2);
+                }
                 if (!focused) {
                     green(0.42f);
                     text(28, 54, "SYSTEM HAS INPUT FOCUS", 2);

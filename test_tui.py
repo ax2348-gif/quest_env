@@ -23,6 +23,9 @@ pose = {'pose': [1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1],
         'position_tracked': True, 'orientation_tracked': True}
 sample = {'schema': 'teleop.quest_state.v1', 'session_id': '1', 'frame_seq': 1,
           'head': pose, 'hands': {'left': pose, 'right': pose}, 'input_focused': False}
+sample['control_intent'] = {'hands': {'left': {'valid': True, 'engaged': True,
+    'needs_release': False, 'engagement_id': 7, 'delta_position': [0.1, 0, 0]}}}
+sample['demo'] = {'enabled': True, 'base_frame': 'live'}
 wire = json.dumps(sample).encode() + b'\n'
 s.tick()
 peer, _ = listener.accept()
@@ -33,7 +36,9 @@ peer.sendall(wire[30:] + b'bad json\n' + wire)
 s.tick()
 assert s.sample == sample and s.bad == 1
 assert any('SYSTEM / TERMINAL' in text for text, _ in watch.view(s))
-assert '+1.000' in watch.pose_lines(pose)[0]
+assert any('LEFT clutch ENGAGED #7' in text for text, _ in watch.view(s))
+assert any('LOCAL KINEMATIC DEMO' in text for text, _ in watch.view(s))
+assert '+1.000'  in watch.pose_lines(pose)[0]
 s.received -= 2
 assert any('STALE' in text for text, _ in watch.view(s))
 peer.close()

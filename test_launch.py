@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def invoke(args, tty=True, failure=False):
         log.write_text('')
+        (directory / '.config/quest-env/restore-terminal-once').unlink(missing_ok=True)
         settings = dict(env, NATIVE_FAILURE='1' if failure else '0')
         if tty:
             master, slave = pty.openpty()
@@ -48,6 +49,11 @@ with tempfile.TemporaryDirectory() as tmp:
         assert code == 0 and 'python' not in calls, calls
         code, calls = invoke([op], failure=True)
         assert code == 1 and 'client/watch.py' not in calls, calls
+    for args, mode in [(['run','-s'],'live'), (['run','-s','--base-frame=frozen'],'frozen'),
+                       (['restart','-s','--no-viewer'],'live'), (['run'],'off')]:
+        code, calls = invoke(args)
+        assert code == 0, calls
+        assert (directory / '.config/quest-env/demo-mode').read_text().strip() == mode
     code, calls = invoke(['run', '--typo'])
     assert code == 2 and not calls
 print('PASS: TTY default viewer, --no-viewer, noninteractive use, native failure, invalid flags')

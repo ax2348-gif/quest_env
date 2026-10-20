@@ -18,10 +18,12 @@
 #include <unistd.h>
 
 #include <array>
+#include <fstream>
 #include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
+#include "teleop_core.h"
 
 #define LOG_TAG "QuestRuntimeXR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -504,6 +506,7 @@ void restoreTerminalTask(android_app* app) {
 }
 
 #include "status_panel.h"
+#include "demo_renderer.h"
 
 class QuestTelemetryApp {
 public:
@@ -537,12 +540,26 @@ public:
             !rightMarker_.init(session_, true)) return false;
         createActions();
         createHandTrackers();
+        if (app_->activity->internalDataPath) {
+            std::ifstream settings(std::string(app_->activity->internalDataPath) +
+                "/home/.config/quest-env/demo-mode");
+            std::string mode; settings >> mode;
+            demoEnabled_ = mode == "live" || mode == "frozen";
+            robot_.frozenMode = mode == "frozen";
+        }
+        panel_.demoMode = demoEnabled_ ? (robot_.frozenMode ? "FROZEN" : "LIVE") : "";
+        if (demoEnabled_ && !demoRenderer_.init(instance_, systemId_, session_)) {
+            LOGE("Kinematic demo renderer initialization failed");
+            return false;
+        }
+        LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
         LOGI("Quest telemetry native runtime initialized");
         return true;
     }
 
     void shutdown() {
         controllerServer_.shutdown();
+        demoRenderer_.shutdown();
         panel_.shutdown();
         leftMarker_.shutdown();
         rightMarker_.shutdown();
@@ -699,6 +716,10 @@ public:
         std::vector<const XrCompositionLayerBaseHeader*> layers;
         if (frameState.shouldRender) {
             layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughComposition));
+            if (demoEnabled_) {
+                const auto* demoLayer = demoRenderer_.draw(session_, localSpace_, frameState.predictedDisplayTime, robot_);
+                if (demoLayer) layers.push_back(demoLayer);
+            }
             if (showPanel) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panelLayer));
             if (showLeft) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&leftLayer));
             if (showRight) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&rightLayer));
@@ -737,6 +758,11 @@ private:
     android_app* app_ = nullptr;
     EglState egl_;
     StatusPanel panel_, leftMarker_, rightMarker_;
+    DemoRenderer demoRenderer_;
+    teleop::Intent operatorIntent_;
+    teleop::Robot robot_;
+    bool demoEnabled_ = false;
+    int64_t lastIntentSample_ = 0;
     XrPosef headPose_{}, leftPose_{}, rightPose_{};
     float frameHz_ = 0, inputMs_ = 0;
     int64_t inputStarted_ = 0;
@@ -1237,6 +1263,27 @@ private:
         leftTracked_ = leftValid && (leftLocation.locationFlags & tracked) == tracked;
         rightTracked_ = rightValid && (rightLocation.locationFlags & tracked) == tracked;
 
+        inputMs_ = static_cast<float>(monotonicNs() - inputStarted_) / 1e6f;
+        const int64_t intentNow = monotonicNs();
+        const bool gap = lastIntentSample_ && intentNow - lastIntentSample_ > 200000000LL;
+        const double dt = lastIntentSample_ ? (intentNow - lastIntentSample_) / 1e9 : 1.0 / 90;
+        lastIntentSample_ = intentNow;
+        teleop::Hand input[2];
+        for (int i = 0; i < 2; ++i) {
+            XrPath hand = i == 0 ? leftHandPath_ : rightHandPath_;
+            input[i].valid = i == 0 ? leftTracked_ : rightTracked_;
+            input[i].pose = DemoRenderer::pose(i == 0 ? leftPose_ : rightPose_);
+            input[i].grip = getFloat(gripValueAction_, hand);
+            input[i].trigger = getFloat(triggerValueAction_, hand);
+            auto stick = getVec2(thumbstickAction_, hand);
+            input[i].sx = stick.x; input[i].sy = stick.y;
+        }
+        operatorIntent_.update(providerSessionId_, sessionState_ == XR_SESSION_STATE_FOCUSED &&
+            actionSyncResult_ == XR_SUCCESS, input[0], input[1], gap);
+        if (demoEnabled_) robot_.update(operatorIntent_, dt,
+            teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
+            getBool(yButtonAction_));
+
         // Keep the historical logcat surface for diagnostics during migration.
         std::ostringstream transforms;
         std::ostringstream buttons;
@@ -1261,7 +1308,6 @@ private:
             __android_log_print(ANDROID_LOG_INFO, kControllerLogTag, "%s", payload.c_str());
         }
 
-        inputMs_ = static_cast<float>(monotonicNs() - inputStarted_) / 1e6f;
         std::ostringstream json;
         json << "{\"schema\":\"" << kControllerSchema
              << "\",\"session_id\":\"" << providerSessionId_
@@ -1293,6 +1339,24 @@ private:
         appendControllerJson(json, true, leftActive, leftLocation);
         json << ',';
         appendControllerJson(json, false, rightActive, rightLocation);
+        json << "},\"control_intent\":";
+        teleop::jsonIntent(json, operatorIntent_);
+        json << ",\"demo\":{\"enabled\":" << (demoEnabled_ ? "true" : "false")
+             << ",\"base_frame\":\"" << (robot_.frozenMode ? "frozen" : "live") << "\"";
+        if (demoEnabled_) {
+            json << ",\"placed\":" << (robot_.placed ? "true" : "false") << ",\"base_position\":";
+            teleop::jsonV(json, robot_.base.p);
+            json << ",\"arms\":[";
+            for (int i=0;i<2;i++) {
+                if(i) json << ',';
+                const auto& arm = robot_.arms[i];
+                json << "{\"position_error_m\":" << arm.posError << ",\"rotation_error_rad\":" << arm.rotError
+                     << ",\"clearance_limited\":" << (arm.limited ? "true" : "false") << ",\"joints\":[";
+                for(int j=0;j<7;j++){if(j)json << ',';json << arm.q[j];}
+                json << "]}";
+            }
+            json << ']';
+        }
         json << "}}";
         controllerServer_.sendLine(json.str());
     }

@@ -149,6 +149,23 @@ def view(stream):
     lines.append((f'XR: {sample.get("xr_session_state", "?")} | actions: {sync_name}'
                   f' | poll {number(sample.get("input_poll_ms")):.2f} ms',
                   'warn' if sync is not None and sync != 0 else ''))
+    intent = sample.get('control_intent')
+    if isinstance(intent, dict):
+        hands = intent.get('hands', {})
+        for side in ('left', 'right'):
+            c = hands.get(side, {}) if isinstance(hands, dict) else {}
+            if not isinstance(c, dict):
+                continue
+            state = 'STALE' if stale else 'INVALID' if not c.get('valid') else 'RELEASE GRIP' if c.get('needs_release') else 'ENGAGED' if c.get('engaged') else 'HOLD JOINTS'
+            delta = c.get('delta_position', [0, 0, 0])
+            if not isinstance(delta, list) or len(delta) != 3:
+                delta = [0, 0, 0]
+            xyz = ' '.join(f'{number(v):+.3f}' for v in delta)
+            lines.append((f'{side.upper()} clutch {state} #{c.get("engagement_id", "?")} | dXYZ {xyz} m',
+                          'good' if state == 'ENGAGED' else 'dim'))
+    demo = sample.get('demo')
+    if isinstance(demo, dict) and demo.get('enabled'):
+        lines.append((f'LOCAL KINEMATIC DEMO | {demo.get("base_frame", "?")} base | Y resets robot', 'title'))
     lines.append((stream.notice, ''))
     for name, item in [('HEAD', sample['head']), ('LEFT', sample['hands'].get('left', {})),
                        ('RIGHT', sample['hands'].get('right', {}))]:

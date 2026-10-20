@@ -13,12 +13,20 @@ launch() {
     operation="$1"
     shift
     viewer=yes
+    demo=off
+    base_frame=live
     for option in "$@"; do
         case "$option" in
             --no-viewer) viewer=no ;;
-            *) echo "Unknown option: $option (use --no-viewer)" >&2; exit 2 ;;
+            -s|--sim) demo=on ;;
+            --base-frame=live) base_frame=live ;;
+            --base-frame=frozen) base_frame=frozen ;;
+            *) echo "Unknown option: $option (use -s, --base-frame=live|frozen, --no-viewer)" >&2; exit 2 ;;
         esac
     done
+    if [ "$operation" = builtin ] && [ "$demo" = on ]; then
+        echo "The bundled APK library has no demo; use q run -s." >&2; exit 2
+    fi
     # Noninteractive automation must not acquire a terminal or hang in curses.
     if [ ! -t 0 ] || [ ! -t 1 ]; then viewer=no; fi
     if [ "$viewer" = yes ]; then
@@ -29,6 +37,11 @@ launch() {
         python3 -c 'import curses' || exit 1
     fi
     if [ "$operation" = run ]; then verify telemetry; fi
+    mkdir -p "$HOME/.config/quest-env"
+    # Read once at native initialization. A plain launch explicitly disables it.
+    if [ "$demo" = on ]; then demo_mode="$base_frame"; else demo_mode=off; fi
+    (umask 077; printf '%s\n' "$demo_mode" > "$HOME/.config/quest-env/demo-mode.tmp")
+    mv "$HOME/.config/quest-env/demo-mode.tmp" "$HOME/.config/quest-env/demo-mode"
     panel_request="$HOME/.config/quest-env/restore-terminal-once"
     rm -f "$panel_request"
     if [ "$viewer" = yes ]; then
@@ -111,6 +124,7 @@ case "${1:-help}" in
     *)
         echo "Usage: sh quest {pull|watch [--host HOST --port PORT]|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
         echo "run/restart/builtin show the viewer in this terminal; --no-viewer skips it."
+        echo "run -s enables the local kinematics demo; --base-frame=frozen freezes clutch base frames."
         echo "pull updates files only; run loads the updated native library."
         ;;
 esac
