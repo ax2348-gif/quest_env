@@ -37,6 +37,7 @@ qhelp() {
       '  qr / q run         Start updated telemetry + viewer' \
       '  qr --no-viewer     Start telemetry without the TUI' \
       '  qs / q stop        Stop telemetry; keep this terminal' \
+      '  q focus            Resume XR input focus without restarting' \
       '  q watch            Live telemetry TUI (pkg install python once)' \
       '  qstatus            Native app status' \
       '  q restart          Restart selected snapshot + viewer' \

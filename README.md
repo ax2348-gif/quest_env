@@ -326,3 +326,21 @@ running. A failed stop is reported with a `q stop` recovery hint.
 `q` or Esc deliberately detaches the viewer and leaves telemetry running.
 Standalone `q watch` remains read-only: Ctrl-C exits only that viewer.
 `--no-viewer` and noninteractive launches retain their detached behavior.
+
+
+### Explicit XR focus recovery
+
+If Meta leaves `XR: VISIBLE | actions: NOT_FOCUSED`, press **f** in the viewer,
+or run `q focus` from a Quest terminal. This checks that an XR process exists
+then uses `quest-launch` to resume `android.app.NativeActivity`, whose host
+manifest declares `singleTask`. It does not invoke `quest-native run/restart`,
+stop the process, or intentionally reset reference frames. The one-time panel
+restoration has already run, so it will not immediately open the panel again.
+
+Success means Android accepted the resume request, not proof of restored XR
+focus. Check for `XR: FOCUSED | actions: OK` and active controllers. Quest may
+hide the system panel when resuming XR; simultaneous panel visibility and XR
+focus are still controlled by Horizon OS. If this fails, further changes belong
+in the host APK's hybrid/focus-aware activity configuration, not controller math.
+The viewer's f key is an explicit local UI-focus action; normal telemetry viewing
+and standalone viewer exit still do not start/stop the native app.

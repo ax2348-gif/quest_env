@@ -74,6 +74,7 @@ case "${1:-help}" in
         sh "$ROOT/shell/install-profile.sh"
         echo "Updated. Telemetry has not been started. Use qr or sh quest run."
         ;;
+    focus) exec python3 "$ROOT/client/watch.py" --focus ;;
     watch)
         shift
         command -v python3 >/dev/null 2>&1 || {

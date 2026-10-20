@@ -8,7 +8,26 @@ import math
 import os
 import select
 import socket
+import subprocess
 import time
+
+
+def focus_xr():
+    """Resume the singleTask XR activity; do not call native run/restart."""
+    try:
+        check = subprocess.run(['quest-native', 'status'], capture_output=True,
+                               text=True, timeout=3, check=True)
+        status = json.loads(check.stdout)
+        if not status.get('ok') or not status.get('xr_pids'):
+            return False, 'Telemetry is stopped; use qr first.'
+        result = subprocess.run(
+            ['quest-launch', 'dev.quest.runtime/android.app.NativeActivity'],
+            capture_output=True, text=True, timeout=5, check=True)
+        if not json.loads(result.stdout).get('ok'):
+            return False, 'XR resume request failed.'
+        return True, 'XR resume requested; check XR: FOCUSED / actions: OK.'
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return False, 'XR resume failed: ' + str(error)
 
 
 class Stream:
@@ -22,6 +41,7 @@ class Stream:
         self.frames = deque()
         self.status = 'Waiting for telemetry'
         self.bad = 0
+        self.notice = 'f: return focus to XR (without restarting telemetry)'
 
     def close(self):
         if self.sock:
@@ -129,7 +149,7 @@ def view(stream):
     lines.append((f'XR: {sample.get("xr_session_state", "?")} | actions: {sync_name}'
                   f' | poll {number(sample.get("input_poll_ms")):.2f} ms',
                   'warn' if sync is not None and sync != 0 else ''))
-    lines.append(('Meta button: return input focus to XR; viewer keeps updating.', ''))
+    lines.append((stream.notice, ''))
     for name, item in [('HEAD', sample['head']), ('LEFT', sample['hands'].get('left', {})),
                        ('RIGHT', sample['hands'].get('right', {}))]:
         if not isinstance(item, dict):
@@ -185,6 +205,11 @@ def run(screen, stream):
         key = screen.getch()
         if key in (ord('q'), ord('Q'), 27):
             return
+        if key in (ord('f'), ord('F')):
+            if stream.address[0] not in ('127.0.0.1', 'localhost', '::1'):
+                stream.notice = 'Focus is a local Quest action; run q focus on Quest.'
+            else:
+                _, stream.notice = focus_xr()
         if key in (curses.KEY_DOWN, ord('j')):
             offset += 1
         elif key in (curses.KEY_UP, ord('k')):
@@ -196,7 +221,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=9391)
+    parser.add_argument('--focus', action='store_true', help='Resume existing local XR activity and exit')
     args = parser.parse_args()
+    if args.focus:
+        ok, message = focus_xr()
+        print(message)
+        raise SystemExit(0 if ok else 1)
     stream = Stream(args.host, args.port)
     try:
         curses.wrapper(run, stream)
