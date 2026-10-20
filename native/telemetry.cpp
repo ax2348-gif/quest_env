@@ -473,9 +473,18 @@ void restoreTerminalTask(android_app* app) {
                 const bool terminal = strcmp(chars, "dev.quest.runtime.TerminalActivity") == 0;
                 env->ReleaseStringUTFChars(name, chars);
                 if (!terminal) break;
-                jmethodID frontMethod = env->GetMethodID(taskClass, "moveToFront", "()V");
-                if (env->ExceptionCheck() || !frontMethod) break;
-                env->CallVoidMethod(task, frontMethod);
+                // Moving the task to front can replace the immersive scene.
+                // Request an adjacent panel instead, retaining the exact URI
+                // used by TerminalActivity's intoExisting document task.
+                jmethodID addFlags = env->GetMethodID(env->GetObjectClass(intent),
+                    "addFlags", "(I)Landroid/content/Intent;");
+                if (env->ExceptionCheck() || !addFlags) break;
+                env->CallObjectMethod(intent, addFlags, 0x10081000);
+                if (env->ExceptionCheck()) break;
+                jmethodID startActivity = env->GetMethodID(activityClass, "startActivity",
+                    "(Landroid/content/Intent;)V");
+                if (env->ExceptionCheck() || !startActivity) break;
+                env->CallVoidMethod(activity, startActivity, intent);
                 restored = !env->ExceptionCheck();
             } while (false);
             bool failed = env->ExceptionCheck();

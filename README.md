@@ -91,8 +91,10 @@ SSH and terminal sessions survive; B remains part of the telemetry button data.
 Artwork updates at 10 Hz; layer poses and telemetry update on every XR frame.
 
 After the first focused XR frame, the native app restores the most recent
-existing runtime terminal task via `ActivityManager.AppTask.moveToFront()`, once
-per launch. Entering immersive mode can hide that panel even though its shell
+existing runtime terminal using its original document intent with
+`NEW_TASK | NEW_DOCUMENT | LAUNCH_ADJACENT`, once per launch.
+`moveToFront()` was tried and caused a black immersive background on Quest;
+it is no longer used. Entering immersive mode can hide that panel even though its shell
 and viewer keep running. This restoration reuses the existing activity and PTY;
 it never creates a new terminal. If there is no terminal task, nothing is opened.
 The restoration can transfer focus to the panel: use the Meta button to return
