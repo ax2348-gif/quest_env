@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as tmp:
         code, calls = invoke([op], failure=True)
         assert code == 1 and 'client/watch.py' not in calls, calls
     for args, mode in [(['run','-s'],'live'), (['run','-s','--base-frame=frozen'],'frozen'),
-                       (['restart','-s','--no-viewer'],'live'), (['run'],'off')]:
+                       (['run','-s','--scheme=body-frozen'],'live body-frozen'), (['run','--scheme=body-frozen'],'off body-frozen'), (['restart','-s','--no-viewer'],'live'), (['run'],'off')]:
         code, calls = invoke(args)
         assert code == 0, calls
         assert (directory / '.config/quest-env/demo-mode').read_text().strip() == mode

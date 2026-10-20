@@ -151,6 +151,7 @@ def view(stream):
                   'warn' if sync is not None and sync != 0 else ''))
     intent = sample.get('control_intent')
     if isinstance(intent, dict):
+        lines.append((f'Scheme: {intent.get("scheme", "standard")}', 'title'))
         lines.append((f'Operator front #{intent.get("operator_frame_revision", 0)} | A: align facing (both grips released)', 'dim'))
         hands = intent.get('hands', {})
         for side in ('left', 'right'):
@@ -166,6 +167,7 @@ def view(stream):
                           'good' if state == 'ENGAGED' else 'dim'))
     demo = sample.get('demo')
     if isinstance(demo, dict) and demo.get('enabled'):
+        lines.append((f'AUTOMOVE {"ON" if demo.get("automove_enabled") else "OFF"} | {"recovering workspace" if demo.get("automove_active") else "idle"} | left stick click toggles (body-frozen)', ''))
         lines.append((f'LOCAL KINEMATIC DEMO | {demo.get("base_frame", "?")} base | Y resets robot', 'title'))
     lines.append((stream.notice, ''))
     for name, item in [('HEAD', sample['head']), ('LEFT', sample['hands'].get('left', {})),

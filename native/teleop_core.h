@@ -112,7 +112,8 @@ struct Hand {
 struct Clutch {
     bool engaged = false, needsRelease = true, valid = false;
     uint64_t id = 0;
-    Pose anchor;
+    Pose anchor, operatorBase;
+    M capturedFromQuest = questToBase();
     V delta;
     M deltaR;
     double gripper = 0;
@@ -123,7 +124,8 @@ struct Clutch {
         delta = {};
         deltaR = {};
     }
-    void update(const Hand &h, bool focused, const M &operatorFromQuest = questToBase()) {
+    void update(const Hand &h, bool focused, const M &operatorFromQuest = questToBase(),
+                bool bodyFrozen = false, const Pose *head = nullptr) {
         valid = focused && h.valid && finite(h.pose) && std::isfinite(h.grip);
         if (!valid) {
             invalidate();
@@ -139,7 +141,21 @@ struct Clutch {
         }
         if (needsRelease)
             return;
-        Pose current{operatorFromQuest * h.pose.p, operatorFromQuest * h.pose.r};
+        if (bodyFrozen && !engaged && h.grip >= .6) {
+            if (!head || !finite(*head)) {
+                invalidate();
+                return;
+            }
+            V f = questToBase() * (head->r * V{0, 0, -1});
+            if (std::hypot(f.x, f.y) < .15) {
+                invalidate();
+                return;
+            }
+            capturedFromQuest = rotation({0, 0, 1}, -std::atan2(f.y, f.x)) * questToBase();
+            operatorBase = {head->p, transpose(capturedFromQuest)};
+        }
+        M mapping = bodyFrozen ? capturedFromQuest : operatorFromQuest;
+        Pose current{mapping * (h.pose.p - (bodyFrozen ? operatorBase.p : V{})), mapping * h.pose.r};
         if (!engaged && h.grip >= .6) {
             anchor = current;
             engaged = true;
@@ -148,7 +164,7 @@ struct Clutch {
         if (engaged) {
             delta = current.p - anchor.p;
             double d = norm(delta);
-            if (d > .45)
+            if (!bodyFrozen && d > .45)
                 delta = delta * (.45 / d);
             deltaR = current.r * transpose(anchor.r);
         }
@@ -160,6 +176,7 @@ struct Intent {
     V drive;
     int64_t session = 0;
     bool initialized = false;
+    bool bodyFrozen = false;
     bool discontinuity = false;
     M operatorFromQuest = questToBase();
     uint64_t operatorFrameRevision = 0;
@@ -192,8 +209,8 @@ struct Intent {
         session = s;
         bool aligned =
             align && focused && !gap && left.grip <= .4 && right.grip <= .4 && head && realign(*head);
-        hands[0].update(left, focused && !gap && !aligned, operatorFromQuest);
-        hands[1].update(right, focused && !gap && !aligned, operatorFromQuest);
+        hands[0].update(left, focused && !gap && !aligned, operatorFromQuest, bodyFrozen, head);
+        hands[1].update(right, focused && !gap && !aligned, operatorFromQuest, bodyFrozen, head);
         drive = {};
         if (focused && !gap && !aligned) {
             if (hands[0].valid) {
@@ -441,17 +458,78 @@ struct Robot {
     bool placed = false, frozenMode = false;
     int64_t session = 0;
     bool resetDown = false;
+    bool automove = false, autoActive = false, autoButtonDown = false;
+    V autoVelocity; // World-space, acceleration limited; independent of base yaw.
+    V recovery(const Intent &in, double dt) {
+        V requested;
+        double reach[2] = {}, worst = 0;
+        V outward[2];
+        bool any = false;
+        constexpr double radius = (.30 + .28 + .065 + .085) * armScale;
+        for (int i = 0; i < 2; ++i) {
+            if (!arms[i].engaged || !in.hands[i].engaged)
+                continue;
+            any = true;
+            V shoulder = compose(base, {{0, arms[i].side * .25, 1.03}, {}}).p;
+            outward[i] = target(in.hands[i], arms[i].anchor, arms[i].frozen).p - shoulder;
+            reach[i] = norm(outward[i]) / radius;
+            worst = std::max(worst, reach[i]);
+        }
+        bool manual = norm(in.drive) > 0;
+        bool valid = in.hands[0].valid && in.hands[1].valid;
+        if (!automove || !in.bodyFrozen || !any || manual || !valid)
+            autoActive = false;
+        else if (worst > .88)
+            autoActive = true;
+        else if (worst < .80)
+            autoActive = false;
+        if (autoActive) {
+            // Search coarse planar directions. Never worsen another engaged arm's extension.
+            double best = 0;
+            for (int k = 0; k < 32; ++k) {
+                V direction{std::cos(k * 2 * pi / 32), std::sin(k * 2 * pi / 32), 0};
+                double gain = 0;
+                bool helps = true;
+                for (int i = 0; i < 2; ++i) {
+                    if (!arms[i].engaged || !in.hands[i].engaged)
+                        continue;
+                    double next = norm(outward[i] - direction * .04) / radius;
+                    if (next > reach[i] + .001)
+                        helps = false;
+                    gain += std::max(0., reach[i] - .78) - std::max(0., next - .78);
+                }
+                if (helps && gain > best + 1e-6) {
+                    best = gain;
+                    requested = direction;
+                }
+            }
+            requested = requested * std::min(.22, std::max(0., worst - .78) * 1.2);
+        }
+        // Loss of tracking/release stops immediately. Ordinary activation, toggle-off,
+        // and completion ramp smoothly (0.35 m/s^2); manual input takes precedence.
+        if (!valid || !any || manual) {
+            autoVelocity = {};
+            return {};
+        }
+        V change = requested - autoVelocity;
+        double amount = norm(change), limit = .35 * dt;
+        autoVelocity = autoVelocity + change * (amount > limit ? limit / amount : 1.);
+        return transpose(base.r) * autoVelocity;
+    }
     void reset(V head, M heading = {}) {
         base = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
         for (auto &wheel : wheels) {
             wheel.steering = wheel.speed = wheel.phase = 0;
         }
+        autoVelocity = {};
+        autoActive = false;
         ground = base.p;
         for (auto &a : arms)
             a.reset();
         placed = true;
     }
-    void update(const Intent &in, double dt, V head, bool headValid, bool resetButton) {
+    void update(const Intent &in, double dt, V head, bool headValid, bool resetButton,
+                bool autoButton = false) {
         if (!placed || session != in.session) {
             placed = false;
             if (headValid)
@@ -468,6 +546,9 @@ struct Robot {
         if (!placed)
             return;
         dt = clamp(dt, 0, .025);
+        if (autoButton && !autoButtonDown && in.bodyFrozen && in.hands[0].valid && in.hands[1].valid)
+            automove = !automove;
+        autoButtonDown = autoButton;
         // Anchor from measured FK BEFORE moving the base on this engagement frame.
         for (int i = 0; i < 2; i++) {
             auto &a = arms[i];
@@ -482,20 +563,24 @@ struct Robot {
                 a.seen = c.id;
                 a.anchor = a.fk(a.q).ee;
                 a.frozen = base;
+                if (in.bodyFrozen) {
+                    a.frozen = compose(base, {{0, a.side * .25, 1.03}, {}});
+                    a.anchor = compose(inverse(a.frozen), compose(base, a.anchor));
+                }
                 a.engaged = true;
             }
         }
+        V drive = in.drive + recovery(in, dt);
         for (auto &wheel : wheels)
-            wheel.update(in.drive, dt);
-        base.p = base.p +
-                 base.r * rotation({0, 0, 1}, in.drive.z * dt * .5) * V{in.drive.x * dt, in.drive.y * dt, 0};
-        base.r = base.r * rotation({0, 0, 1}, in.drive.z * dt);
+            wheel.update(drive, dt);
+        base.p = base.p + base.r * rotation({0, 0, 1}, drive.z * dt * .5) * V{drive.x * dt, drive.y * dt, 0};
+        base.r = base.r * rotation({0, 0, 1}, drive.z * dt);
         for (int i = 0; i < 2; i++) {
             auto &a = arms[i];
             const auto &c = in.hands[i];
             if (!c.engaged || !a.engaged)
                 continue;
-            a.targetWorld = target(c, a.anchor, frozenMode ? a.frozen : base);
+            a.targetWorld = target(c, a.anchor, (in.bodyFrozen || frozenMode) ? a.frozen : base);
             a.ik(compose(inverse(base), a.targetWorld), arms[1 - i].fk(arms[1 - i].q), dt);
         }
     }
@@ -512,7 +597,8 @@ inline void jsonM(std::ostream &o, const M &r) {
 }
 inline void jsonIntent(std::ostream &o, const Intent &in) {
     o << "{\"schema\":\"teleop.operator_intent.v1\",\"session_id\":\"" << in.session
-      << "\",\"frame\":\"operator_base_flu\",\"translation_limit_m\":0.45,\"base_velocity\":";
+      << "\",\"frame\":\"operator_base_flu\",\"scheme\":\"" << (in.bodyFrozen ? "body-frozen" : "standard")
+      << "\",\"translation_limit_m\":" << (in.bodyFrozen ? "null" : "0.45") << ",\"base_velocity\":";
     jsonV(o, in.drive);
     o << ",\"operator_frame_revision\":" << in.operatorFrameRevision << ",\"operator_from_quest\":";
     jsonM(o, in.operatorFromQuest);
@@ -528,6 +614,12 @@ inline void jsonIntent(std::ostream &o, const Intent &in) {
         jsonV(o, c.delta);
         o << ",\"delta_rotation\":";
         jsonM(o, c.deltaR);
+        if (in.bodyFrozen) {
+            o << ",\"operator_base_in_quest_position\":";
+            jsonV(o, c.operatorBase.p);
+            o << ",\"operator_base_in_quest_rotation\":";
+            jsonM(o, c.operatorBase.r);
+        }
         o << ",\"gripper\":" << c.gripper << '}';
     }
     o << "}}";

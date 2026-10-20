@@ -212,6 +212,118 @@ int main(int argc, char **argv) {
             robot.update(intent, 1. / 90, {0, 0, 1.6}, true, false);
         assert(robot.arms[0].q == held);
     }
+    // Body-frozen: independent heading captures and no walking displacement cap.
+    {
+        Intent in;
+        in.bodyFrozen = true;
+        Pose head{{0, 1.6, 0}, {}};
+        Hand l = hand(), r = hand();
+        in.update(7, true, l, r, false, &head);
+        l.grip = .9;
+        in.update(7, true, l, r, false, &head);
+        Robot bot;
+        bot.update(in, 0, {0, 0, 1.6}, true, false);
+        Pose initial = compose(bot.base, bot.arms[0].fk(bot.arms[0].q).ee);
+        assert(near(bot.arms[0].targetWorld.p, initial.p));
+        assert(near(bot.arms[0].targetWorld.r, initial.r));
+        Pose frozen = bot.arms[0].frozen;
+        head.r = rotation({0, 1, 0}, pi / 2);
+        r.grip = .9;
+        in.update(7, true, l, r, false, &head);
+        assert(!near(in.hands[0].capturedFromQuest, in.hands[1].capturedFromQuest));
+        l.pose.p.z = -1.;
+        r.pose.p.z = -1.;
+        head.p.z = -1.;
+        in.update(7, true, l, r, false, &head);
+        assert(near(in.hands[0].delta, {1, 0, 0}));
+        assert(near(in.hands[1].delta, {0, -1, 0}));
+        // Move/rotate robot independently: frozen world target remains anchored.
+        bot.base.p.x += 1.;
+        bot.base.r = rotation({0, 0, 1}, .3);
+        bot.update(in, 0, {1, 0, 1.6}, true, false);
+        assert(near(bot.arms[0].frozen.p, frozen.p));
+        assert(near(bot.arms[0].targetWorld.p, initial.p + V{1, 0, 0}));
+        assert(near(bot.arms[0].targetWorld.r, initial.r));
+        // Matching straight operator/base velocity leaves relative target unchanged.
+        bot.base.r = {};
+        assert(near(compose(inverse(bot.base), bot.arms[0].targetWorld).p,
+                    compose(inverse(Pose{bot.base.p - V{1, 0, 0}, {}}), initial).p));
+        in.update(7, false, l, r, false, &head);
+        assert(!in.hands[0].engaged);
+    }
+    // Automove ramps, has hysteresis, stays idle inside the workspace, and
+    // declines incompatible bimanual directions. Test recovery without IK noise.
+    {
+        Intent in;
+        in.bodyFrozen = true;
+        Robot bot;
+        bot.reset({0, 0, 1.6});
+        for (int i = 0; i < 2; ++i) {
+            in.hands[i].valid = true;
+        }
+        in.hands[0].engaged = true;
+        bot.arms[0].engaged = true;
+        bot.arms[0].frozen = bot.base;
+        bot.arms[0].anchor = {{.85, .25, 1.03}, {}};
+        assert(near(bot.recovery(in, .01), {}));
+        bot.automove = true;
+        V prev;
+        for (int n = 0; n < 100; ++n) {
+            bot.recovery(in, .01);
+            assert(norm(bot.autoVelocity - prev) <= .00350001);
+            assert(norm(bot.autoVelocity) <= .220001);
+            prev = bot.autoVelocity;
+        }
+        assert(bot.autoVelocity.x > .1 && bot.autoActive);
+        bot.automove = false;
+        bot.recovery(in, .01);
+        assert(norm(bot.autoVelocity) > 0 && norm(bot.autoVelocity - prev) <= .00350001);
+        for (int n = 0; n < 100; ++n)
+            bot.recovery(in, .01);
+        assert(near(bot.autoVelocity, {}));
+        bot.automove = true;
+        bot.arms[0].anchor.p.x = .6;
+        assert(near(bot.recovery(in, .01), {}) && !bot.autoActive);
+        bot.arms[0].anchor.p.x = .85;
+        bot.arms[1].engaged = true;
+        in.hands[1].engaged = true;
+        bot.arms[1].frozen = bot.base;
+        bot.arms[1].anchor = {{-.85, -.25, 1.03}, {}};
+        assert(near(bot.recovery(in, .01), {}));
+        in.drive = {.1, 0, 0};
+        assert(near(bot.recovery(in, .01), {}));
+        in.drive = {};
+        in.hands[0].valid = false;
+        assert(near(bot.recovery(in, .01), {}));
+    }
+    // Full update: toggle once per press and recover without creeping forever.
+    {
+        Intent in;
+        in.bodyFrozen = true;
+        Pose head{{0, 1.6, 0}, {}};
+        Hand l = hand(), r = hand();
+        in.update(91, true, l, r, false, &head);
+        Robot bot;
+        bot.update(in, .01, {0, 0, 1.6}, true, false);
+        l.grip = .9;
+        in.update(91, true, l, r, false, &head);
+        bot.update(in, .01, {0, 0, 1.6}, true, false, true);
+        assert(bot.automove);
+        bot.update(in, .01, {0, 0, 1.6}, true, false, true);
+        assert(bot.automove);
+        Pose fixedTarget = compose(bot.base, {{.85, .25, 1.03}, {}});
+        bot.arms[0].anchor = compose(inverse(bot.arms[0].frozen), fixedTarget);
+        V previous;
+        for (int n = 0; n < 500; ++n) {
+            bot.update(in, .01, {0, 0, 1.6}, true, false, false);
+            assert(norm(bot.autoVelocity - previous) <= .0035001);
+            previous = bot.autoVelocity;
+            assert(near(bot.arms[0].targetWorld.p, fixedTarget.p));
+        }
+        assert(!bot.autoActive && near(bot.autoVelocity, {}));
+        bot.update(in, .01, {0, 0, 1.6}, true, false, true);
+        assert(!bot.automove);
+    }
     // Large unreachable command stays finite and within limits.
     Arm a, other(-1);
     for (int n = 0; n < 100; n++)

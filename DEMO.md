@@ -143,3 +143,68 @@ check is pending; the headset was left charging and no ADB was used.
 
 Rollback: `usable-2026-10-20` remains the earlier checkpoint. The previous
 no-adjacent-placement library is commit `e9b74f3`.
+
+
+## Experimental walking scheme: body-frozen
+
+The baseline is tagged `initial-usable-teleop-v1` (50ae956). The original scheme
+remains the default. Pull and try the alternative:
+
+```sh
+qp
+qr -s --scheme=body-frozen
+```
+
+Each grip engagement independently records an upright operator frame (head
+position and gravity-aligned headset yaw) and an upright robot shoulder frame
+(current shoulder position and platform yaw). Headset yaw approximates torso
+heading: looking sideways at engagement changes that hand's command axes.
+These frames remain fixed in world space until that hand releases. No continuous
+head/body recentering happens. A still calibrates placement/reset heading only
+when both grips are released; new engagements in this scheme capture current
+head yaw regardless of that calibration.
+
+For each hand, transform the anchor and current controller into its captured
+operator frame. Use `dp = current.p - anchor.p` and spatial rotation
+`dR = current.R * anchor.R^T`. Capture the measured EE pose in the corresponding
+robot shoulder frame and command `p = EE_anchor.p + dp`,
+`R = dR * EE_anchor.R`, then transform back through the frozen shoulder frame.
+Thus clutch engagement gives exactly the measured EE target. Moving the platform
+does not add another displacement to that target. Equal operator/platform travel
+leaves the relative arm target unchanged; operator travel alone moves the target
+through the world. Release holds arm joints, so a moving platform carries the arm.
+The old 0.45 m clutch displacement cap is disabled here to allow walking.
+Tracking/session discontinuities still invalidate engagements and require release.
+
+### Automove (left stick click)
+
+Automove starts **off**, is available only in body-frozen mode, and is toggled by
+left thumbstick click. The TUI reports enabled/recovering state. It translates the
+base on the flat ground without changing its heading or frozen EE targets.
+
+This prototype detects outer workspace extension, a cause of near-straight-arm
+singularities. It starts above 88% of nominal shoulder-to-tool reach and stops
+below 80%. It searches coarse planar directions, accepting only directions that
+reduce extension pressure without materially worsening another engaged arm.
+Incompatible bimanual targets or purely vertical overreach can therefore leave
+it unable to help. It does not solve arbitrary wrist singularities, joint limits,
+or collisions, and does not continuously optimize fine arm configurations.
+
+Velocity is capped at 0.22 m/s and changes by at most 0.35 m/s² during normal
+start, recovery, and toggle-off. Speed decreases near the recovery boundary;
+hysteresis prevents repeated starts/stops. Manual joystick input takes precedence.
+Release of all clutches, loss of valid input, and manual override stop automatic
+motion immediately; those interruptions deliberately bypass the ordinary ramp.
+The existing swerve animation follows combined manual/automatic base velocity.
+
+`control_intent` adds `scheme` and each hand's captured operator base pose in
+Quest LOCAL coordinates. `translation_limit_m` is null in body-frozen mode.
+Raw tracking telemetry remains unchanged. Demo telemetry adds automove state and
+world-space velocity. Remote robots must still capture their own measured EE and
+base/shoulder frames; this demo never commands a real robot.
+
+Host regression tests cover separate hand headings, zero initial target jump,
+frozen anchors under robot rotation/translation, matching walking displacement,
+uncapped travel, automove acceleration/speed limits, idle workspace behavior,
+conflicting targets, and manual/tracking interruptions. Headset validation of this
+experimental scheme remains to be done.

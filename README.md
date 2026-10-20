@@ -382,3 +382,8 @@ The library now also emits `control_intent` alongside raw telemetry, including
 per-hand clutch IDs and operator-base translation/rotation deltas. Read
 [DEMO.md](DEMO.md) for the protocol, remote anchor handling, controls and validation
 limits. No APK update is needed.
+
+Experimental walking teleop: `qr -s --scheme=body-frozen`; each clutch captures
+independent upright operator/robot frames frozen in space. Left stick click toggles
+smooth coarse automove (off initially). See [DEMO.md](DEMO.md).
+The initial usable version is tagged `initial-usable-teleop-v1`.

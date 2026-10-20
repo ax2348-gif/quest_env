@@ -545,7 +545,9 @@ public:
                 "/home/.config/quest-env/demo-mode");
             std::string mode; settings >> mode;
             demoEnabled_ = mode == "live" || mode == "frozen";
-            robot_.frozenMode = mode == "frozen";
+            std::string scheme; settings >> scheme;
+            operatorIntent_.bodyFrozen = scheme == "body-frozen";
+            robot_.frozenMode = mode == "frozen" || operatorIntent_.bodyFrozen;
         }
         panel_.demoMode = demoEnabled_ ? (robot_.frozenMode ? "FROZEN" : "LIVE") : "";
         if (demoEnabled_ && !demoRenderer_.init(instance_, systemId_, session_)) {
@@ -1288,7 +1290,7 @@ private:
             headTracked_ ? &headForAlignment : nullptr, alignEdge);
         if (demoEnabled_) robot_.update(operatorIntent_, dt,
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
-            getBool(yButtonAction_));
+            getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_));
 
         // Keep the historical logcat surface for diagnostics during migration.
         std::ostringstream transforms;
@@ -1350,6 +1352,10 @@ private:
         json << ",\"demo\":{\"enabled\":" << (demoEnabled_ ? "true" : "false")
              << ",\"base_frame\":\"" << (robot_.frozenMode ? "frozen" : "live") << "\"";
         if (demoEnabled_) {
+            json << ",\"automove_enabled\":" << (robot_.automove ? "true" : "false")
+                 << ",\"automove_active\":" << (robot_.autoActive ? "true" : "false")
+                 << ",\"automove_velocity_world\":";
+            teleop::jsonV(json, robot_.autoVelocity);
             json << ",\"placed\":" << (robot_.placed ? "true" : "false") << ",\"base_position\":";
             teleop::jsonV(json, robot_.base.p);
             json << ",\"arms\":[";

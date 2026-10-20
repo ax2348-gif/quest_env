@@ -36,6 +36,7 @@ qhelp() {
       '  qp / q pull        Pull updates, verify, install profile' \
       '  qr / q run         Start updated telemetry + viewer' \
       '  qr -s              Local bimanual kinematics demo' \
+      '  qr -s --scheme=body-frozen  Walking demo; stick click: automove' \
       '  qr --no-viewer     Start telemetry without the TUI' \
       '  qs / q stop        Stop telemetry; keep this terminal' \
       '  q focus            Resume XR input focus without restarting' \
