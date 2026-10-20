@@ -28,15 +28,35 @@ launch() {
         }
         python3 -c 'import curses' || exit 1
     fi
+    if [ "$operation" = run ]; then verify telemetry; fi
+    if [ "$viewer" = yes ]; then
+        # Keep a supervising shell: terminal SIGINT reaches this process and
+        # its child. A pending trap runs after the foreground child returns.
+        trap 'interrupt_launch' INT
+    fi
     if [ "$operation" = run ]; then
-        verify telemetry
         quest-native run "$ROOT/packages/telemetry/libapp.so"
     else
         quest-native "$operation"
     fi
     if [ "$viewer" = yes ]; then
-        exec python3 "$ROOT/client/watch.py"
+        viewer_result=0
+        QUEST_VIEWER_OWNS_TELEMETRY=1 python3 "$ROOT/client/watch.py" || viewer_result=$?
+        # Also handle SIGINT delivered only to the viewer, not the whole group.
+        if [ "$viewer_result" -eq 130 ]; then interrupt_launch; fi
+        trap - INT
+        return "$viewer_result"
     fi
+}
+interrupt_launch() {
+    # Ignore repeated Ctrl-C while the stop request is in flight.
+    trap '' INT
+    echo "Stopping telemetry..."
+    if ! quest-native stop; then
+        echo "Telemetry stop failed; retry with q stop." >&2
+    fi
+    exit 130
+
 }
 case "${1:-help}" in
     pull)

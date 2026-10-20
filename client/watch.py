@@ -5,6 +5,7 @@ from collections import deque
 import curses
 import json
 import math
+import os
 import select
 import socket
 import time
@@ -106,7 +107,8 @@ def bar(value):
 
 
 def view(stream):
-    lines = [('QUEST TELEMETRY  |  read-only  |  q / Esc / Ctrl-C exit', 'title')]
+    exit_hint = 'Ctrl-C stops telemetry' if os.environ.get('QUEST_VIEWER_OWNS_TELEMETRY') == '1' else 'Ctrl-C exits viewer'
+    lines = [(f'QUEST TELEMETRY | q / Esc detach | {exit_hint}', 'title')]
     sample = stream.sample
     age = time.monotonic() - stream.received
     stale = sample is not None and age > 1.0
@@ -199,7 +201,9 @@ def main():
     try:
         curses.wrapper(run, stream)
     except KeyboardInterrupt:
-        pass
+        # The supervising launcher uses 130 to stop its native telemetry app.
+        # Standalone q watch has no supervisor and remains read-only.
+        raise SystemExit(130)
     finally:
         stream.close()
 

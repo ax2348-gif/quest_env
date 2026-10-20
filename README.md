@@ -286,8 +286,9 @@ XR input focus, headset and controller positions/rotation matrices, tracking
 validity, triggers, grips, sticks, and buttons. Poses are raw OpenXR LOCAL
 coordinates in metres, +Y up; R maps device axes into LOCAL. It is a read-only
 viewer, not a command source. Press the Meta button to restore XR input focus;
-the dashboard continues updating. `q`/Esc/Ctrl-C exits the viewer without stopping
-telemetry. Resize the terminal or use Up/Down (j/k) to scroll smaller windows.
+the dashboard continues updating. `q`/Esc detaches without stopping telemetry;
+Ctrl-C also stops telemetry when the viewer was launched by `qr`/`q run`.
+Standalone `q watch` never stops telemetry. Resize the terminal or use Up/Down (j/k) to scroll smaller windows.
 
 The client retries connections, marks samples stale after one second, and clears
 old poses on disconnect. UI refresh is 10 Hz while the socket drains full-rate
@@ -305,3 +306,16 @@ failure behavior; `test_tui.py` verifies framing/reconnect/stale state and curse
 was inspected with a software capture of the actual drawing calls, including
 transparent backgrounds, premultiplied alpha and title fading. This does not
 replace checking compositor placement, readability and controller focus on Quest.
+
+
+### Ctrl-C ownership
+
+When `qr` / `q run`, `q restart` or `q builtin` launches the viewer, Ctrl-C
+exits the viewer **and stops native telemetry**, returning status 130. This also
+applies during native startup. The supervising shell sends the stop request and
+ignores repeated interrupts while it completes. SSH and terminal sessions remain
+running. A failed stop is reported with a `q stop` recovery hint.
+
+`q` or Esc deliberately detaches the viewer and leaves telemetry running.
+Standalone `q watch` remains read-only: Ctrl-C exits only that viewer.
+`--no-viewer` and noninteractive launches retain their detached behavior.
