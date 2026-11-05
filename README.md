@@ -72,6 +72,23 @@ Android log buffer, so it is off unless enabled before `qr`:
 touch "$HOME/.config/quest-env/legacy-logcat"   # enable; rm the file to disable
 ```
 
+### Network access
+
+The server listens on every interface, port 9391, so other machines connect
+directly to `<quest-ip>:9391`; no on-headset `nc` relay is needed. The stream is
+unauthenticated, send-only plain TCP, and the eight reader slots are shared:
+by default anyone who can reach the Quest (Wi-Fi, hotspot or Tailscale) can read
+head/controller poses or occupy slots and lock out a teleop client. To accept
+only readers arriving on loopback or the Quest's Tailscale address
+(100.64.0.0/10), enable before `qr`:
+
+```sh
+touch "$HOME/.config/quest-env/tailnet-only"   # restrict; rm the file to allow any interface
+```
+
+The check uses the address the connection arrived on, not the peer's address,
+so devices on a network that also uses 100.64.0.0/10 addressing do not pass.
+
 Tracking still requires the Quest to be awake, focused on XR, and past any
 physical-button privacy lock. Shell/network access can work while tracking is
 unavailable.
@@ -323,8 +340,8 @@ Standalone `q watch` never stops telemetry. Resize the terminal or use Up/Down (
 
 The client retries connections, marks samples stale after one second, and clears
 old poses on disconnect. UI refresh is 10 Hz while the socket drains full-rate
-samples. `q watch --host HOST --port PORT` can view an explicitly forwarded stream;
-the native server still binds only to 127.0.0.1:9391. It now supports eight readers,
+samples. `q watch --host HOST --port PORT` can view the stream from another machine;
+the native server binds all interfaces on port 9391 (see "Network access" above). It now supports eight readers,
 so the TUI can coexist with teleop. Slow readers are disconnected independently
 rather than blocking XR; excess connections are closed. No recording or automatic
 telemetry startup is enabled by the viewer.

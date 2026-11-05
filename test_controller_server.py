@@ -18,6 +18,10 @@ headers = '''
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <cstdio>
+#include <cstdint>
 #define LOGI(...) ((void)0)
 #define LOGW(...) ((void)0)
 #define LOGE(...) ((void)0)
@@ -32,6 +36,9 @@ int main() {
     sockaddr_in addr{};
     socklen_t len = sizeof(addr);
     assert(getsockname(server.listenFd_, (sockaddr*)&addr, &len) == 0);
+    assert(addr.sin_addr.s_addr == htonl(INADDR_ANY));
+    const sockaddr_in any = addr;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     auto connectReader = [&]() {
         int fd = socket(AF_INET, SOCK_STREAM, 0);
         timeval timeout{2, 0};
@@ -62,6 +69,58 @@ int main() {
     server.shutdown();
     assert(!server.connected());
     close(slow); close(fast); close(replacement);
+
+    // Optional tailnet-only check: by local (arrival) address, not peer address.
+    assert(TcpControllerServer::allowedLocalAddress(0x7F000001u));     // 127.0.0.1
+    assert(TcpControllerServer::allowedLocalAddress(0x64487753u));     // 100.72.77.83
+    assert(TcpControllerServer::allowedLocalAddress(0x647FFFFFu));     // 100.127.255.255
+    assert(!TcpControllerServer::allowedLocalAddress(0x643FFFFFu));    // 100.63.255.255
+    assert(!TcpControllerServer::allowedLocalAddress(0x64800000u));    // 100.128.0.0
+    assert(!TcpControllerServer::allowedLocalAddress(0xC0A80102u));    // 192.168.1.2
+    // A non-loopback, non-Tailscale address on this host stands in for Wi-Fi.
+    in_addr lan{};
+    ifaddrs* list = nullptr;
+    assert(getifaddrs(&list) == 0);
+    for (ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        const uint32_t host = ntohl(((sockaddr_in*)i->ifa_addr)->sin_addr.s_addr);
+        if (!TcpControllerServer::allowedLocalAddress(host)) {
+            lan = ((sockaddr_in*)i->ifa_addr)->sin_addr;
+            break;
+        }
+    }
+    freeifaddrs(list);
+    auto connectTo = [&](in_addr ip) {
+        sockaddr_in target = addr;
+        target.sin_addr = ip;
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        timeval timeout{2, 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        assert(connect(fd, (sockaddr*)&target, sizeof(target)) == 0);
+        return fd;
+    };
+    for (bool tailnetOnly : {false, true}) {
+        TcpControllerServer filtered;
+        filtered.tailnetOnly = tailnetOnly;
+        assert(filtered.start());
+        len = sizeof(addr);
+        getsockname(filtered.listenFd_, (sockaddr*)&addr, &len);
+        assert(addr.sin_addr.s_addr == any.sin_addr.s_addr);
+        int local = connectTo(in_addr{htonl(INADDR_LOOPBACK)});
+        filtered.sendLine("loop");
+        assert(recv(local, buffer, 5, MSG_WAITALL) == 5);
+        if (lan.s_addr) {
+            int remote = connectTo(lan);
+            filtered.sendLine("lan");
+            // Rejected readers see EOF; accepted ones get the line.
+            ssize_t got = recv(remote, buffer, 4, MSG_WAITALL);
+            assert(tailnetOnly ? got == 0 : got == 4);
+            close(remote);
+        }
+        filtered.shutdown();
+        close(local);
+    }
+    if (!lan.s_addr) puts("SKIP: no non-loopback IPv4 address for the interface check");
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
@@ -70,4 +129,4 @@ with tempfile.TemporaryDirectory() as tmp:
     src.write_text(headers + server + harness)
     subprocess.run(['c++', '-std=c++17', '-O2', str(src), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True, timeout=15)
-print('PASS: concurrent readers, slow-reader isolation, replacement reader, shutdown')
+print('PASS: all-interface bind, concurrent readers, slow-reader isolation, replacement reader, shutdown, optional tailnet-only check')

@@ -247,7 +247,9 @@ public:
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(kControllerPort);
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        // All interfaces, so network clients need no on-headset relay. See
+        // tailnetOnly for restricting which interfaces readers may arrive on.
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
         if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
             ::listen(fd, 8) != 0) {
             LOGE("controller server bind/listen failed on %d: %s", kControllerPort, strerror(errno));
@@ -257,8 +259,17 @@ public:
         const int flags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         listenFd_ = fd;
-        LOGI("OpenXR controller server listening on 127.0.0.1:%d", kControllerPort);
+        LOGI("OpenXR controller server listening on 0.0.0.0:%d", kControllerPort);
         return true;
+    }
+
+    // Only accept readers that arrived on loopback or on this device's
+    // Tailscale address (100.64.0.0/10). Checking the local address, not the
+    // peer's, keeps hotspot/CGNAT peers in 100.64/10 on Wi-Fi from passing.
+    bool tailnetOnly = false;
+
+    static bool allowedLocalAddress(uint32_t hostOrder) {
+        return (hostOrder >> 24) == 127 || (hostOrder & 0xFFC00000u) == 0x64400000u;
     }
 
     void sendLine(const std::string& payload) {
@@ -303,6 +314,16 @@ private:
         for (int attempt = 0; attempt < 8; ++attempt) {
             int fd = accept(listenFd_, nullptr, nullptr);
             if (fd < 0) return;
+            if (tailnetOnly) {
+                sockaddr_in local{};
+                socklen_t length = sizeof(local);
+                if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &length) != 0 ||
+                    local.sin_family != AF_INET ||
+                    !allowedLocalAddress(ntohl(local.sin_addr.s_addr))) {
+                    close(fd);
+                    continue;
+                }
+            }
             int* slot = nullptr;
             for (int& candidate : clients_) {
                 if (candidate < 0) { slot = &candidate; break; }
@@ -589,6 +610,7 @@ public:
             // The per-frame logcat copy of the controller stream is opt-in: it
             // floods the log buffer and duplicates the TCP JSON.
             legacyLogcat_ = access((config + "legacy-logcat").c_str(), F_OK) == 0;
+            controllerServer_.tailnetOnly = access((config + "tailnet-only").c_str(), F_OK) == 0;
             std::ifstream settings(config + "demo-mode");
             std::string mode; settings >> mode;
             demoEnabled_ = mode == "live" || mode == "frozen";
@@ -604,6 +626,8 @@ public:
         LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
         LOGI("Legacy %s logcat controller line %s", kControllerLogTag,
              legacyLogcat_ ? "enabled" : "disabled");
+        LOGI("Controller readers accepted from %s",
+             controllerServer_.tailnetOnly ? "loopback and Tailscale only" : "any interface");
         LOGI("Quest telemetry native runtime initialized");
         return true;
     }
