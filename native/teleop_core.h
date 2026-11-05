@@ -585,13 +585,29 @@ struct Robot {
         }
     }
 };
-inline void jsonV(std::ostream &o, V v) { o << '[' << v.x << ',' << v.y << ',' << v.z << ']'; }
+// JSON has no NaN/Infinity; ostream would print "nan"/"inf" and invalidate the
+// whole record. Non-finite values become null so other fields stay readable.
+inline void jsonN(std::ostream &o, double x) {
+    if (std::isfinite(x))
+        o << x;
+    else
+        o << "null";
+}
+inline void jsonV(std::ostream &o, V v) {
+    o << '[';
+    jsonN(o, v.x);
+    o << ',';
+    jsonN(o, v.y);
+    o << ',';
+    jsonN(o, v.z);
+    o << ']';
+}
 inline void jsonM(std::ostream &o, const M &r) {
     o << '[';
     for (int i = 0; i < 9; i++) {
         if (i)
             o << ',';
-        o << r.v[i];
+        jsonN(o, r.v[i]);
     }
     o << ']';
 }
@@ -620,7 +636,9 @@ inline void jsonIntent(std::ostream &o, const Intent &in) {
             o << ",\"operator_base_in_quest_rotation\":";
             jsonM(o, c.operatorBase.r);
         }
-        o << ",\"gripper\":" << c.gripper << '}';
+        o << ",\"gripper\":";
+        jsonN(o, c.gripper);
+        o << '}';
     }
     o << "}}";
 }

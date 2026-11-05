@@ -12,6 +12,7 @@
 #include <math.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -140,20 +141,28 @@ public:
             return;
         }
         const std::string message = payload + "\n";
-        ssize_t written = ::send(fd_, message.data(), message.size(), MSG_NOSIGNAL);
+        // Like the controller server: a slow reader must never block XR, and a
+        // partial write would split a record, so drop the connection instead.
+        ssize_t written = ::send(
+            fd_, message.data(), message.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
         if (written < 0 || static_cast<size_t>(written) != message.size()) {
-            LOGW("hand telemetry TCP send failed: %s", strerror(errno));
+            LOGW("hand telemetry TCP send failed: %s",
+                 written < 0 ? strerror(errno) : "partial write");
             closeSocket();
         }
     }
 
 private:
     int fd_ = -1;
+    bool connecting_ = false;
     int64_t nextConnectNs_ = 0;
 
     bool ensureConnected() {
-        if (fd_ >= 0) {
+        if (fd_ >= 0 && !connecting_) {
             return true;
+        }
+        if (fd_ >= 0) {
+            return finishConnect();
         }
         const int64_t now = monotonicNs();
         if (now < nextConnectNs_) {
@@ -165,19 +174,46 @@ private:
         if (fd < 0) {
             return false;
         }
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(fd);
+            return false;
+        }
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(kHandPort);
         inet_pton(AF_INET, kHandHost, &addr.sin_addr);
-        if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-            close(fd);
+        fd_ = fd;
+        if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+            LOGI("hand telemetry connected to %s:%d", kHandHost, kHandPort);
+            return true;
+        }
+        if (errno != EINPROGRESS) {
+            closeSocket();
             return false;
         }
+        // Completion is checked on later frames; a stuck attempt is abandoned
+        // when the next reconnect slot arrives.
+        connecting_ = true;
+        return false;
+    }
 
-        int one = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-        fd_ = fd;
+    bool finishConnect() {
+        pollfd p{fd_, POLLOUT, 0};
+        if (poll(&p, 1, 0) == 0) {
+            if (monotonicNs() >= nextConnectNs_) closeSocket();
+            return false;
+        }
+        int error = 0;
+        socklen_t length = sizeof(error);
+        if (getsockopt(fd_, SOL_SOCKET, SO_ERROR, &error, &length) != 0 || error != 0) {
+            closeSocket();
+            return false;
+        }
+        connecting_ = false;
         LOGI("hand telemetry connected to %s:%d", kHandHost, kHandPort);
         return true;
     }
@@ -187,6 +223,7 @@ private:
             close(fd_);
             fd_ = -1;
         }
+        connecting_ = false;
     }
 };
 
@@ -301,7 +338,12 @@ void appendQuat(std::ostringstream& ss, const XrQuaternionf& q) {
        << fixed(q.z, 3) << ", " << fixed(q.w, 3);
 }
 
-void appendMatrix(std::ostringstream& ss, const XrPosef& pose) {
+// JSON variant of fixed(): non-finite values become null, never "nan"/"inf".
+std::string jsonFixed(float value, int precision = 6) {
+    return std::isfinite(value) ? fixed(value, precision) : "null";
+}
+
+void poseMatrix(const XrPosef& pose, float m[16]) {
     float x = pose.orientation.x;
     float y = pose.orientation.y;
     float z = pose.orientation.z;
@@ -324,13 +366,18 @@ void appendMatrix(std::ostringstream& ss, const XrPosef& pose) {
     const float wy = w * y;
     const float wz = w * z;
 
-    const float m[16] = {
+    const float values[16] = {
         1.0f - 2.0f * (yy + zz), 2.0f * (xy - wz), 2.0f * (xz + wy), pose.position.x,
         2.0f * (xy + wz), 1.0f - 2.0f * (xx + zz), 2.0f * (yz - wx), pose.position.y,
         2.0f * (xz - wy), 2.0f * (yz + wx), 1.0f - 2.0f * (xx + yy), pose.position.z,
         0.0f, 0.0f, 0.0f, 1.0f,
     };
+    memcpy(m, values, sizeof(values));
+}
 
+void appendMatrix(std::ostringstream& ss, const XrPosef& pose) {
+    float m[16];
+    poseMatrix(pose, m);
     for (int i = 0; i < 16; ++i) {
         if (i != 0) {
             ss << ' ';
@@ -340,18 +387,14 @@ void appendMatrix(std::ostringstream& ss, const XrPosef& pose) {
 }
 
 void appendMatrixJson(std::ostringstream& ss, const XrPosef& pose) {
-    std::ostringstream matrix;
-    appendMatrix(matrix, pose);
+    float m[16];
+    poseMatrix(pose, m);
     ss << '[';
-    std::istringstream values(matrix.str());
-    std::string value;
-    bool first = true;
-    while (values >> value) {
-        if (!first) {
+    for (int i = 0; i < 16; ++i) {
+        if (i != 0) {
             ss << ',';
         }
-        ss << value;
-        first = false;
+        ss << jsonFixed(m[i]);
     }
     ss << ']';
 }
@@ -541,8 +584,12 @@ public:
         createActions();
         createHandTrackers();
         if (app_->activity->internalDataPath) {
-            std::ifstream settings(std::string(app_->activity->internalDataPath) +
-                "/home/.config/quest-env/demo-mode");
+            const std::string config = std::string(app_->activity->internalDataPath) +
+                "/home/.config/quest-env/";
+            // The per-frame logcat copy of the controller stream is opt-in: it
+            // floods the log buffer and duplicates the TCP JSON.
+            legacyLogcat_ = access((config + "legacy-logcat").c_str(), F_OK) == 0;
+            std::ifstream settings(config + "demo-mode");
             std::string mode; settings >> mode;
             demoEnabled_ = mode == "live" || mode == "frozen";
             std::string scheme; settings >> scheme;
@@ -555,6 +602,8 @@ public:
             return false;
         }
         LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
+        LOGI("Legacy %s logcat controller line %s", kControllerLogTag,
+             legacyLogcat_ ? "enabled" : "disabled");
         LOGI("Quest telemetry native runtime initialized");
         return true;
     }
@@ -764,6 +813,7 @@ private:
     teleop::Intent operatorIntent_;
     teleop::Robot robot_;
     bool demoEnabled_ = false;
+    bool legacyLogcat_ = false;
     bool alignButtonDown_ = false;
     int64_t lastIntentSample_ = 0;
     XrPosef headPose_{}, leftPose_{}, rightPose_{};
@@ -1292,29 +1342,9 @@ private:
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
             getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_));
 
-        // Keep the historical logcat surface for diagnostics during migration.
-        std::ostringstream transforms;
-        std::ostringstream buttons;
-        bool first = true;
-        if (leftValid) {
-            transforms << "l:";
-            appendMatrix(transforms, leftLocation.pose);
-            appendButtons(buttons, true, leftActive, leftLocation.locationFlags);
-            first = false;
-        }
-        if (rightValid) {
-            if (!first) {
-                transforms << '|';
-                buttons << ',';
-            }
-            transforms << "r:";
-            appendMatrix(transforms, rightLocation.pose);
-            appendButtons(buttons, false, rightActive, rightLocation.locationFlags);
-        }
-        if (!first) {
-            const std::string payload = transforms.str() + "&" + buttons.str();
-            __android_log_print(ANDROID_LOG_INFO, kControllerLogTag, "%s", payload.c_str());
-        }
+        // Historical logcat surface, opt-in via ~/.config/quest-env/legacy-logcat.
+        if (legacyLogcat_) emitLegacyLogcat(leftActive, leftValid, leftLocation,
+                                            rightActive, rightValid, rightLocation);
 
         std::ostringstream json;
         json << "{\"schema\":\"" << kControllerSchema
@@ -1323,8 +1353,8 @@ private:
              << ",\"sample_time_ns\":" << static_cast<int64_t>(time)
              << ",\"xr_session_state\":\"" << sessionStateName() << "\""
              << ",\"action_sync_result\":" << static_cast<int>(actionSyncResult_)
-             << ",\"xr_frame_hz\":" << fixed(frameHz_, 1)
-             << ",\"input_poll_ms\":" << fixed(inputMs_, 3)
+             << ",\"xr_frame_hz\":" << jsonFixed(frameHz_, 1)
+             << ",\"input_poll_ms\":" << jsonFixed(inputMs_, 3)
              << ",\"input_focused\":"
              << (sessionState_ == XR_SESSION_STATE_FOCUSED ? "true" : "false")
              << ",\"reference_space\":\"local\",\"head\":{";
@@ -1362,15 +1392,46 @@ private:
             for (int i=0;i<2;i++) {
                 if(i) json << ',';
                 const auto& arm = robot_.arms[i];
-                json << "{\"position_error_m\":" << arm.posError << ",\"rotation_error_rad\":" << arm.rotError
-                     << ",\"clearance_limited\":" << (arm.limited ? "true" : "false") << ",\"joints\":[";
-                for(int j=0;j<7;j++){if(j)json << ',';json << arm.q[j];}
+                json << "{\"position_error_m\":";
+                teleop::jsonN(json, arm.posError);
+                json << ",\"rotation_error_rad\":";
+                teleop::jsonN(json, arm.rotError);
+                json << ",\"clearance_limited\":" << (arm.limited ? "true" : "false") << ",\"joints\":[";
+                for(int j=0;j<7;j++){if(j)json << ',';teleop::jsonN(json, arm.q[j]);}
                 json << "]}";
             }
             json << ']';
         }
         json << "}}";
         controllerServer_.sendLine(json.str());
+    }
+
+    void emitLegacyLogcat(
+        bool leftActive, bool leftValid, const XrSpaceLocation& leftLocation,
+        bool rightActive, bool rightValid, const XrSpaceLocation& rightLocation) {
+        std::ostringstream transforms;
+        std::ostringstream buttons;
+        bool first = true;
+        if (leftValid) {
+            transforms << "l:";
+            appendMatrix(transforms, leftLocation.pose);
+            appendButtons(buttons, true, leftActive, leftLocation.locationFlags);
+            first = false;
+        }
+        if (rightValid) {
+            if (!first) {
+                transforms << '|';
+                buttons << ',';
+            }
+            transforms << "r:";
+            appendMatrix(transforms, rightLocation.pose);
+            appendButtons(buttons, false, rightActive, rightLocation.locationFlags);
+            first = false;
+        }
+        if (!first) {
+            const std::string payload = transforms.str() + "&" + buttons.str();
+            __android_log_print(ANDROID_LOG_INFO, kControllerLogTag, "%s", payload.c_str());
+        }
     }
 
     void appendButtons(
@@ -1454,9 +1515,9 @@ private:
         } else {
             ss << "null";
         }
-        ss << ",\"trigger\":" << fixed(trigger)
-           << ",\"grip\":" << fixed(grip)
-           << ",\"joystick\":[" << fixed(stick.x) << ',' << fixed(stick.y)
+        ss << ",\"trigger\":" << jsonFixed(trigger)
+           << ",\"grip\":" << jsonFixed(grip)
+           << ",\"joystick\":[" << jsonFixed(stick.x) << ',' << jsonFixed(stick.y)
            << "],\"buttons\":{\"primary\":";
         appendJsonBool(ss, left ? getBool(xButtonAction_) : getBool(aButtonAction_));
         ss << ",\"secondary\":";

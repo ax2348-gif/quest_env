@@ -47,7 +47,8 @@ def main():
     if args.openxr_aar:
         command += ["--openxr-aar", str(args.openxr_aar)]
     subprocess.run(command, check=True)
-    readelf = args.ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+    host = "darwin-x86_64" if sys.platform == "darwin" else "linux-x86_64"
+    readelf = args.ndk / "toolchains/llvm/prebuilt" / host / "bin/llvm-readelf"
     symbols = subprocess.check_output(
         [str(readelf), "--dyn-syms", "--wide", str(output)], text=True)
     for symbol in ("quest_native_app_v1", "ANativeActivity_onCreate"):

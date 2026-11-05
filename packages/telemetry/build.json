@@ -4,16 +4,16 @@
   "architecture": "android-arm64",
   "minimum_api": 28,
   "openxr_loader": "1.1.53",
-  "library_sha256": "bf85199c9d863b32536ee6c055cc6d4ceb7f80577d6cfcc301e3cbb634a66982",
+  "library_sha256": "99fd59d7e83955a6047357674ab0d05cb8f5ecbf967456a14e68ccf755aaf524",
   "sources": {
     "native/demo_renderer.h": "e435763cdeb92e573dc297b921db20e485a9055943351e726b271a9df1104051",
     "native/identity.c": "7254e24ef193afeb24a7a79255c9fc775aaa95b1090573efc0e6d19808ae175c",
     "native/quest_native_app.h": "7178c1635f1a62b4229510b2dbaa58ae53cf43ccaa5eb516236100e3e724d6d3",
     "native/status_panel.h": "9e79e37f53ab49fdc401ccfe90831ef3f14ec9608e8e2f97dcf3827c93cc0377",
-    "native/telemetry.cpp": "4296b9b28baf53f5de3972facc9f200f35b7a5a2e0a249f76c14d6f3a22b9d97",
-    "native/teleop_core.h": "cbd6d4edaa5ccc8c67626c978ee7f5079e6f5b470c420f4439b397c7cc4620e1",
-    "tools/compile_native.py": "6c5994f6986a3ecbeff6a37e92cada17fca163b646a1a82040df934ead1a70f9",
-    "tools/deliver.py": "f9db0b4bf5b0b5b0c4d2d91b8b6f4a96b3d0fb4a87403347a408188418af0d8e"
+    "native/telemetry.cpp": "2a6b146f34f8230e19d2743c65d4efb16418a09e5669d9056a53728a95ab22ed",
+    "native/teleop_core.h": "9eb4c4d5cd0e4e83356119c357434f3968bd46c8944e3fcf7273b3fd8aa2d4d4",
+    "tools/compile_native.py": "c9030f69a89d0e9f6003ca4986dfac054b4c7763b05145c9197ff408d59280a3",
+    "tools/deliver.py": "8a0871f59543ef032d94fd7941f2ae52e59d259418d6010a967d5860ec1b7e36"
   },
   "ndk": "Pkg.Desc = Android NDK\nPkg.Revision = 27.2.12479018\nPkg.BaseRevision = 27.2.12479018\nPkg.ReleaseName = r27c\n"
 }

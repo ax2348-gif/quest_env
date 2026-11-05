@@ -31,7 +31,9 @@ python3 tools/deliver.py native \
   --openxr-aar /path/to/openxr_loader_for_android-1.1.53.aar
 ```
 
-The current builder targets Linux x86-64 development hosts. Build caches stay in
+The builder runs on Linux x86-64 and macOS (Intel or Apple Silicon) development
+hosts. Libraries built on different hosts are not byte-identical, so
+`library_sha256` changes with the build host even for unchanged source. Build caches stay in
 `build/` and are ignored. The small native library is intentionally tracked in
 Git, so the Quest needs neither a compiler nor Git LFS.
 
@@ -62,6 +64,14 @@ not proof of active tracking. Live telemetry can be inspected with:
 nc 127.0.0.1 9391
 ```
 
+The TCP stream is the only controller output by default. The older per-frame
+logcat line (tag `wE9ryARX`, `l:…|r:…&buttons`) duplicates it and floods the
+Android log buffer, so it is off unless enabled before `qr`:
+
+```sh
+touch "$HOME/.config/quest-env/legacy-logcat"   # enable; rm the file to disable
+```
+
 Tracking still requires the Quest to be awake, focused on XR, and past any
 physical-button privacy lock. Shell/network access can work while tracking is
 unavailable.
@@ -80,8 +90,8 @@ The opaque panel is replaced by premultiplied-alpha green graphics over passthro
   approximate controller markers, not calibrated physical thumbstick locations.
   They disappear when tracking or XR focus is lost.
 
-`INPUT ... MS` measures elapsed time for action sync, pose reads and diagnostic
-formatting, before JSON serialization/socket sending. It is **not end-to-end
+`INPUT ... MS` measures elapsed time for action sync and pose reads, before
+intent computation, JSON serialization and socket sending. It is **not end-to-end
 latency**. `XR ... HZ` is derived from the runtime's predicted display period,
 not measured receiver throughput; the TUI separately reports receive rate.
 

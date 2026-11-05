@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build the replaceable telemetry library with the NDK; no APK/Gradle needed."""
-import argparse, json, os, pathlib, subprocess, zipfile
+import argparse, json, os, pathlib, subprocess, sys, zipfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--name',default='Quest telemetry')
@@ -21,7 +21,8 @@ with zipfile.ZipFile(a.openxr_aar) as z:
   if path.is_absolute() or '..' in path.parts:raise ValueError('Unsafe AAR path')
   if info.filename.startswith('prefab/modules/'):z.extract(info,work/'openxr')
 prefab=work/'openxr/prefab/modules'
-bin=a.ndk/'toolchains/llvm/prebuilt/linux-x86_64/bin'
+# macOS NDKs ship universal (x86_64 + arm64) binaries under darwin-x86_64.
+bin=a.ndk/'toolchains/llvm/prebuilt'/('darwin-x86_64' if sys.platform=='darwin' else 'linux-x86_64')/'bin'
 cc=bin/'aarch64-linux-android28-clang';cxx=bin/'aarch64-linux-android28-clang++'
 glue=a.ndk/'sources/android/native_app_glue'
 def run(args):subprocess.run([str(x) for x in args],check=True)
