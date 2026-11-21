@@ -1,5 +1,5 @@
 #pragma once
-#include "teleop_core.h"
+#include "wireframe.h"
 // Stereo world-space wireframes, composited with alpha over passthrough.
 class DemoRenderer {
     struct Eye {
@@ -42,47 +42,14 @@ class DemoRenderer {
         }
         return s;
     }
-    void line(teleop::V a, teleop::V b, teleop::V color) {
-        auto c = teleop::transpose(teleop::questToBase());
-        a = c * a;
-        b = c * b;
-        vertices.push_back(
-            {float(a.x), float(a.y), float(a.z), float(color.x), float(color.y), float(color.z)});
-        vertices.push_back(
-            {float(b.x), float(b.y), float(b.z), float(color.x), float(color.y), float(color.z)});
-    }
-    void box(const teleop::Pose &p, teleop::V half, teleop::V color) {
-        teleop::V v[8];
-        for (int i = 0; i < 8; i++)
-            v[i] = p.p + p.r * teleop::V{(i & 1) ? half.x : -half.x, (i & 2) ? half.y : -half.y,
-                                         (i & 4) ? half.z : -half.z};
-        for (int i = 0; i < 8; i++)
-            for (int k = 0; k < 3; k++)
-                if (!(i & (1 << k)))
-                    line(v[i], v[i | (1 << k)], color);
-    }
-    void link(teleop::V a, teleop::V b, double radius, teleop::V color) {
-        using namespace teleop;
-        V along = unit(b - a);
-        V u = unit(cross(along, std::abs(along.z) < .9 ? V{0, 0, 1} : V{0, 1, 0})) * radius,
-          v = cross(along, u);
-        for (int i = 0; i < 8; i++) {
-            double t = i * pi / 4, t1 = (i + 1) * pi / 4;
-            V n = u * std::cos(t) + v * std::sin(t), n1 = u * std::cos(t1) + v * std::sin(t1);
-            line(a + n, a + n1, color);
-            line(b + n, b + n1, color);
-            if (i % 2 == 0)
-                line(a + n, b + n, color);
-        }
-    }
-    void axes(const teleop::Pose &p, double size) {
-        line(p.p, p.p + p.r * teleop::V{size, 0, 0}, {1, .22, .18});
-        line(p.p, p.p + p.r * teleop::V{0, size, 0}, {.25, 1, .4});
-        line(p.p, p.p + p.r * teleop::V{0, 0, size}, {.3, .5, 1});
-    }
+    // The demo's primitives live in wireframe.h, shared with the robot AR view.
+    teleop::Wire wire_;
+    void line(teleop::V a, teleop::V b, teleop::V color) { wire_.line(a, b, color); }
+    void box(const teleop::Pose &p, teleop::V half, teleop::V color) { wire_.box(p, half, color); }
+    void link(teleop::V a, teleop::V b, double radius, teleop::V color) { wire_.link(a, b, radius, color); }
+    void axes(const teleop::Pose &p, double size) { wire_.axes(p, size); }
     void geometry(const teleop::Robot &r) {
         using namespace teleop;
-        vertices.clear();
         V baseColor{.65, .8, .77};
         for (int i = -8; i <= 8; i++) {
             double t = i * .5;
@@ -274,7 +241,16 @@ class DemoRenderer {
     }
     const XrCompositionLayerBaseHeader *draw(XrSession session, XrSpace space, XrTime time,
                                              const teleop::Robot &robot) {
-        if (!program || !robot.placed)
+        return draw(session, space, time, &robot, nullptr);
+    }
+    // Either part may be absent: the kinematic demo robot (when placed) and extra
+    // operator-FLU segments (the robot AR view). Nothing to draw -> no layer.
+    const XrCompositionLayerBaseHeader *draw(XrSession session, XrSpace space, XrTime time,
+                                             const teleop::Robot *robot,
+                                             const std::vector<teleop::Segment> *extra) {
+        if (robot && !robot->placed)
+            robot = nullptr;
+        if (!program || (!robot && (!extra || extra->empty())))
             return nullptr;
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
         locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -288,7 +264,23 @@ class DemoRenderer {
              (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT)) !=
                 (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
             return nullptr;
-        geometry(robot);
+        wire_.clear();
+        if (robot)
+            geometry(*robot);
+        if (extra)
+            wire_.segs.insert(wire_.segs.end(), extra->begin(), extra->end());
+        vertices.clear();
+        vertices.reserve(wire_.segs.size() * 2);
+        {
+            auto c = teleop::transpose(teleop::questToBase());
+            for (const auto &sg : wire_.segs) {
+                teleop::V a = c * sg.a, b = c * sg.b;
+                vertices.push_back({float(a.x), float(a.y), float(a.z), float(sg.color.x), float(sg.color.y),
+                                    float(sg.color.z)});
+                vertices.push_back({float(b.x), float(b.y), float(b.z), float(sg.color.x), float(sg.color.y),
+                                    float(sg.color.z)});
+            }
+        }
         glDisable(GL_SCISSOR_TEST);
         glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);

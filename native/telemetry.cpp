@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "teleop_core.h"
+#include "wireframe.h"
 
 #define LOG_TAG "QuestRuntimeXR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
