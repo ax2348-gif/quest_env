@@ -426,6 +426,75 @@ void appendJsonBool(std::ostringstream& ss, bool value) {
     ss << (value ? "true" : "false");
 }
 
+// The battery, from Android's sticky ACTION_BATTERY_CHANGED broadcast (no permission needed: the SSH shell's
+// app sandbox cannot read sysfs or the battery service, but registerReceiver(null, filter) returns the last intent).
+struct BatteryInfo {
+    bool valid = false;
+    int pct = -1;          // 0..100
+    bool charging = false; // BatteryManager.BATTERY_STATUS_CHARGING or _FULL
+    bool plugged = false;
+    float temperature_c = 0;
+};
+
+BatteryInfo readBattery(android_app* app) {
+    BatteryInfo out;
+    if (app == nullptr || app->activity == nullptr) return out;
+    JavaVM* vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    bool detach = false;
+    const jint envStatus = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (envStatus == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return out;
+        detach = true;
+    } else if (envStatus != JNI_OK || env == nullptr) {
+        return out;
+    }
+    jclass filterClass = env->FindClass("android/content/IntentFilter");
+    jmethodID filterInit = filterClass ? env->GetMethodID(filterClass, "<init>", "(Ljava/lang/String;)V") : nullptr;
+    jstring action = env->NewStringUTF("android.intent.action.BATTERY_CHANGED");
+    jobject filter = filterInit ? env->NewObject(filterClass, filterInit, action) : nullptr;
+    jobject activity = app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID registerReceiver = env->GetMethodID(
+        activityClass, "registerReceiver",
+        "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;");
+    jobject intent = (filter && registerReceiver) ?
+        env->CallObjectMethod(activity, registerReceiver, nullptr, filter) : nullptr;
+    if (intent != nullptr && !env->ExceptionCheck()) {
+        jclass intentClass = env->GetObjectClass(intent);
+        jmethodID getIntExtra = env->GetMethodID(intentClass, "getIntExtra", "(Ljava/lang/String;I)I");
+        auto extra = [&](const char* key, int def) {
+            jstring k = env->NewStringUTF(key);
+            int v = env->CallIntMethod(intent, getIntExtra, k, def);
+            env->DeleteLocalRef(k);
+            return env->ExceptionCheck() ? def : v;
+        };
+        if (getIntExtra != nullptr) {
+            const int level = extra("level", -1), scale = extra("scale", -1), status = extra("status", -1);
+            const int plugged = extra("plugged", 0), temp = extra("temperature", -10000);
+            if (level >= 0 && scale > 0) {
+                out.valid = true;
+                out.pct = (100 * level + scale / 2) / scale;
+                out.charging = status == 2 || status == 5;   // CHARGING, FULL
+                out.plugged = plugged != 0;
+                out.temperature_c = temp > -10000 ? temp / 10.0f : 0.0f;
+            }
+        }
+        env->DeleteLocalRef(intentClass);
+        env->DeleteLocalRef(intent);
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        out.valid = false;
+    }
+    if (filter) env->DeleteLocalRef(filter);
+    env->DeleteLocalRef(action);
+    if (filterClass) env->DeleteLocalRef(filterClass);
+    env->DeleteLocalRef(activityClass);
+    if (detach) vm->DetachCurrentThread();
+    return out;
+}
+
 bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     JavaVM* vm = app->activity->vm;
     JNIEnv* env = nullptr;
@@ -878,6 +947,9 @@ private:
     }
 
     android_app* app_ = nullptr;
+    BatteryInfo battery_;               // read every kBatteryPeriodNs on the frame loop (a binder call, ~1 ms)
+    int64_t batteryReadNs_ = 0;
+    static constexpr int64_t kBatteryPeriodNs = 10000000000LL;
     EglState egl_;
     StatusPanel panel_, leftMarker_, rightMarker_;
     DemoRenderer demoRenderer_;
@@ -1500,7 +1572,19 @@ private:
              << ",\"input_poll_ms\":" << jsonFixed(inputMs_, 3)
              << ",\"input_focused\":"
              << (sessionState_ == XR_SESSION_STATE_FOCUSED ? "true" : "false")
-             << ",\"reference_space\":\"local\",\"head\":{";
+             << ",\"reference_space\":\"local\"";
+        if (const int64_t nowNs = monotonicNs(); batteryReadNs_ == 0 || nowNs - batteryReadNs_ > kBatteryPeriodNs) {
+            battery_ = readBattery(app_);
+            batteryReadNs_ = nowNs;
+        }
+        if (battery_.valid) {                 // additive: older consumers ignore it
+            json << ",\"device\":{\"battery_pct\":" << battery_.pct << ",\"charging\":";
+            appendJsonBool(json, battery_.charging);
+            json << ",\"plugged\":";
+            appendJsonBool(json, battery_.plugged);
+            json << ",\"temperature_c\":" << jsonFixed(battery_.temperature_c, 1) << "}";
+        }
+        json << ",\"head\":{";
         json << "\"position_valid\":";
         appendJsonBool(json, (headLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0);
         json << ",\"orientation_valid\":";
