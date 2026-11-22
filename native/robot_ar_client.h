@@ -425,15 +425,19 @@ class ClientCore {
             return;
         lastModelAttempt_ = now;
         std::string body, error;
-        bool ok = httpGet(config_.modelUrl, running_, body, error);
-        // A description node without the boxes variant rejects it (4xx): use simple, once.
-        if (!ok && error.compare(0, 6, "HTTP 4") == 0 && boxesFallback(config_.modelUrl)) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                snap_.modelNote = "SIMPLE MODEL - NO BOXES";
-                snap_.modelUrl = config_.modelUrl;
-            }
-            ok = httpGet(config_.modelUrl, running_, body, error);
+        std::string url = config_.modelUrl;        // the configured URL is never changed: boxes are retried
+        bool ok = httpGet(url, running_, body, error);
+        // A description node without the boxes variant rejects it (4xx): use simple for THIS fetch only; the next
+        // fetch (a new connection, a model_version change) asks for boxes again.
+        bool simple = false;
+        if (!ok && error.compare(0, 6, "HTTP 4") == 0 && boxesFallback(url)) {
+            simple = true;
+            ok = httpGet(url, running_, body, error);
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            snap_.modelNote = ok && simple ? "SIMPLE MODEL - NO BOXES" : "";
+            snap_.modelUrl = url;
         }
         if (!ok) {
             setError("MODEL " + error);
