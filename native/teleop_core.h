@@ -207,8 +207,11 @@ struct Intent {
         }
         initialized = true;
         session = s;
-        bool aligned =
-            align && focused && !gap && left.grip <= .4 && right.grip <= .4 && head && realign(*head);
+        // A realigns forward in the standard scheme only. Body-frozen engagements take
+        // their frame from the head at engagement, so a realignment would only add a
+        // discontinuity (no operatorFromQuest change, no revision bump).
+        bool aligned = align && !bodyFrozen && focused && !gap && left.grip <= .4 && right.grip <= .4 && head &&
+                       realign(*head);
         hands[0].update(left, focused && !gap && !aligned, operatorFromQuest, bodyFrozen, head);
         hands[1].update(right, focused && !gap && !aligned, operatorFromQuest, bodyFrozen, head);
         drive = {};

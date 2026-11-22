@@ -126,6 +126,28 @@ int main(int argc, char **argv) {
         intent.update(78, true, left, right);
         assert(intent.operatorFrameRevision == 0 && near(intent.operatorFromQuest, questToBase()));
     }
+    // Body-frozen: A never realigns (no operator_from_quest change, no revision bump)
+    // and does not interrupt clutches or driving on that frame.
+    {
+        Intent intent;
+        intent.bodyFrozen = true;
+        Hand left = hand(), right = hand();
+        Pose head{{0, 1.6, 0}, rotation({0, 1, 0}, -pi / 2)};
+        intent.update(91, true, left, right, false, &head);
+        M before = intent.operatorFromQuest;
+        intent.update(91, true, left, right, false, &head, true);
+        assert(intent.operatorFrameRevision == 0 && near(before, intent.operatorFromQuest));
+        left.sy = 1;
+        left.grip = .9;
+        intent.update(91, true, left, right, false, &head, true);
+        assert(intent.operatorFrameRevision == 0 && intent.hands[0].engaged && intent.drive.x > 0);
+        // The same press in the standard scheme still realigns.
+        Intent standard;
+        Hand released = hand();
+        standard.update(91, true, released, released, false, &head);
+        standard.update(91, true, released, released, false, &head, true);
+        assert(standard.operatorFrameRevision == 1 && !near(standard.operatorFromQuest, questToBase()));
+    }
     // Ideal swerve velocities match the rigid-base twist for translation and yaw.
     {
         Robot robot;
