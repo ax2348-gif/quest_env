@@ -2,7 +2,7 @@
 """A stand-in for the robot's description + robot_state.v1 endpoints (host tests).
 
 Serves, like the robot frontend (paths under /nodes/<node>):
-  GET /nodes/description/model?format=json&variant=simple   the description (primitives)
+  GET /nodes/description/model/tree?variant=simple   the description (primitives)
   GET /nodes/sim/robot_state/stream?format=jsonl&hz=30       robot_state.v1 lines (chunked)
   GET /nodes/sim/objects/stream?format=jsonl&hz=10           {"objects": {...}} lines
   GET /fake/bump                                             new model_version (taller mast)
@@ -192,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         query = parse_qs(url.query)
         hz = min(120.0, max(1.0, float(query.get("hz", ["30"])[0])))
-        if url.path == "/nodes/description/model":
+        if url.path in ("/nodes/description/model/tree", "/nodes/description/model"):
             with LOCK:
                 self.server.model_requests += 1
                 return self.send_json(model())

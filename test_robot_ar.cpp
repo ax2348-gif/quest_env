@@ -199,12 +199,12 @@ static void testPlacement() {
 
 static void testConfig() {
     Config c = parseConfig("url=http://erid:8080/\n");
-    assert(c.enabled && c.modelUrl == "http://erid:8080/nodes/description/model?format=json&variant=simple");
+    assert(c.enabled && c.modelUrl == "http://erid:8080/nodes/description/model/tree?variant=simple");
     assert(c.stateUrl == "http://erid:8080/nodes/sim/robot_state/stream?format=jsonl&hz=30");
     c = parseConfig("# x\nurl=http://a\nstate = http://robot:8200/robot_state/stream\nobjects=http://o/s\n"
                     "offset=0.5,-1,0.25\nyaw=90\nscale=0.5\n");
     assert(c.stateUrl == "http://robot:8200/robot_state/stream" && c.objectsUrl == "http://o/s");
-    assert(c.modelUrl == "http://a/nodes/description/model?format=json&variant=simple");
+    assert(c.modelUrl == "http://a/nodes/description/model/tree?variant=simple");
     assert(near(c.offset, V{.5, -1, .25}) && near(c.yawDeg, 90) && near(c.scale, .5));
     assert(!parseConfig("").enabled && !parseConfig("model=http://x/m\n").enabled);
     assert(near(parseConfig("url=http://a\nscale=-3\n").scale, 1));

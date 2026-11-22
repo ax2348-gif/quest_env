@@ -16,7 +16,7 @@ qr --scheme=body-frozen --ar=http://HOST[:PORT]        # HOST = the robot fronte
 
 | What | Default URL | Override |
 | --- | --- | --- |
-| Description | `<url>/nodes/description/model?format=json&variant=simple` | `--ar-model=URL` |
+| Description | `<url>/nodes/description/model/tree?variant=simple` | `--ar-model=URL` |
 | State stream | `<url>/nodes/sim/robot_state/stream?format=jsonl&hz=30` | `--ar-state=URL` |
 | Objects stream (optional) | objects inside the state lines | `--ar-objects=URL` |
 
@@ -76,7 +76,7 @@ differing). Connection changes are logged to logcat (`Robot AR ...`).
 
 The parser is tolerant; these are the shapes it is tested with.
 
-Description (`GET .../model?format=json&variant=simple`):
+Description (`GET .../model/tree?variant=simple`):
 
 ```json
 {"model_version": "a1b2", "root": "base_link",

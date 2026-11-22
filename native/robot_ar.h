@@ -4,7 +4,7 @@
 // OpenXR or GL) so host tests cover parsing, FK, placement and staleness.
 //
 // Inputs (see ROBOT_AR.md):
-//   description  GET .../nodes/description/model?format=json&variant=simple
+//   description  GET .../nodes/description/model/tree?variant=simple
 //   state        robot_state.v1 JSON lines: {"t","seq","model_version",
 //                "base":[x,y,z,qx,qy,qz,qw], "joints":{name: q}, "overlays":{...},
 //                "objects":{name:{"pose":[7],"geom":{...}}}}
@@ -788,7 +788,7 @@ inline Config parseConfig(const std::string &text) {
         base.pop_back();
     if (!base.empty()) {
         if (c.modelUrl.empty())
-            c.modelUrl = base + "/nodes/description/model?format=json&variant=simple";
+            c.modelUrl = base + "/nodes/description/model/tree?variant=simple";
         if (c.stateUrl.empty())
             c.stateUrl = base + "/nodes/sim/robot_state/stream?format=jsonl&hz=30";
     }
