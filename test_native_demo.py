@@ -36,7 +36,19 @@ with tempfile.TemporaryDirectory(prefix='quest-demo-test-') as tmp:
     for name in ('EGL', 'GLES3', 'KHR'):
         shutil.copytree(headers/name, tmp/'include'/name)
     render = tmp / 'render'
-    run('g++', '-std=c++17', '-O2', '-DWL_EGL_PLATFORM', '-I', tmp/'include',
+    run('g++', '-std=c++17', '-O2', '-pthread', '-DWL_EGL_PLATFORM', '-I', tmp/'include', '-I', ROOT/'native',
         '-I', xr, ROOT/'test_demo_render.cpp', '-l:'+egl, '-l:'+gles, '-o', render)
-    run(render, env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE='1'))
-    print('Previews: /tmp/quest-demo-eye-{1,2}.ppm (synthetic camera, not headset capture).')
+    import sys
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import threading
+    import fake_robot_server
+    server = fake_robot_server.serve(0, objects_inline=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        run(render, f'http://127.0.0.1:{server.server_address[1]}', env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE='1'))
+    finally:
+        server.stopping = True
+        server.shutdown()
+        server.server_close()
+    print('Previews: /tmp/quest-demo-eye-{1,2}.ppm, robot AR (fake server) /tmp/quest-ar-eye-{1,2}.ppm and '
+          'stale /tmp/quest-ar-stale-eye-{1,2}.ppm (synthetic camera, not headset capture).')

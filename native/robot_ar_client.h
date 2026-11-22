@@ -381,7 +381,7 @@ struct Snapshot {
     uint64_t states = 0, modelFetches = 0;
 };
 
-class Client {
+class ClientCore {
     Config config_;
     std::atomic<bool> running_{false};
     std::thread state_, objects_;
@@ -549,30 +549,62 @@ class Client {
         }
     }
 
+    friend class Client;
+    std::atomic<int> active_{0};
+
   public:
-    ~Client() { stop(); }
-    void start(const Config &c) {
-        stop();
-        config_ = c;
-        if (!c.enabled)
-            return;
-        running_ = true;
-        state_ = std::thread([this] { runState(); });
-        if (!c.objectsUrl.empty())
-            objects_ = std::thread([this] { runObjects(); });
-    }
-    void stop() {
-        running_ = false;
-        if (state_.joinable())
-            state_.join();
-        if (objects_.joinable())
-            objects_.join();
-    }
-    bool running() const { return running_; }
     Snapshot snapshot() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return snap_;
     }
+};
+
+// Owns the threads. The shared core outlives them, so stop() can give up
+// waiting (a DNS lookup cannot be interrupted) and detach without risk.
+class Client {
+    std::shared_ptr<ClientCore> core_;
+    std::thread state_, objects_;
+
+  public:
+    ~Client() { stop(); }
+    void start(const Config &c) {
+        stop();
+        if (!c.enabled)
+            return;
+        core_ = std::make_shared<ClientCore>();
+        core_->config_ = c;
+        core_->running_ = true;
+        auto core = core_;
+        core->active_ = c.objectsUrl.empty() ? 1 : 2;
+        state_ = std::thread([core] {
+            core->runState();
+            core->active_--;
+        });
+        if (!c.objectsUrl.empty())
+            objects_ = std::thread([core] {
+                core->runObjects();
+                core->active_--;
+            });
+    }
+    // Returns within ~timeoutMs even if a thread is stuck in name resolution.
+    void stop(int timeoutMs = 1000) {
+        if (!core_)
+            return;
+        core_->running_ = false;
+        for (int t = 0; t < timeoutMs && core_->active_ > 0; t += 10)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        bool done = core_->active_ == 0;
+        for (std::thread *th : {&state_, &objects_})
+            if (th->joinable()) {
+                if (done)
+                    th->join();
+                else
+                    th->detach();
+            }
+        core_.reset();
+    }
+    bool running() const { return core_ && core_->running_; }
+    Snapshot snapshot() const { return core_ ? core_->snapshot() : Snapshot{}; }
 };
 
 // Receipt age in seconds (infinite before the first state).

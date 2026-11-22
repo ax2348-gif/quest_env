@@ -414,3 +414,11 @@ Experimental walking teleop: `qr -s --scheme=body-frozen`; each clutch captures
 independent upright operator/robot frames frozen in space. Left stick click toggles
 smooth coarse automove (off initially). See [DEMO.md](DEMO.md).
 The initial usable version is tagged `initial-usable-teleop-v1`.
+
+## Robot AR view
+
+`qr --ar=http://HOST[:PORT]` draws the robot from its description and
+`robot_state.v1` stream (the robot_utils simulator today) as a wireframe over
+passthrough, placed like the demo (Y re-places). It coexists with telemetry and
+either teleop scheme and does not change the telemetry records. See
+[ROBOT_AR.md](ROBOT_AR.md) for options, endpoint formats and validation.

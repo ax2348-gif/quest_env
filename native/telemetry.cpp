@@ -26,6 +26,7 @@
 #include <vector>
 #include "teleop_core.h"
 #include "wireframe.h"
+#include "robot_ar_client.h"
 
 #define LOG_TAG "QuestRuntimeXR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -618,11 +619,25 @@ public:
             std::string scheme; settings >> scheme;
             operatorIntent_.bodyFrozen = scheme == "body-frozen";
             robot_.frozenMode = mode == "frozen" || operatorIntent_.bodyFrozen;
+            // Robot AR view: written by `quest run --ar=URL`, absent otherwise.
+            std::ifstream arFile(config + "robot-ar");
+            std::stringstream arText;
+            arText << arFile.rdbuf();
+            arConfig_ = robot_ar::parseConfig(arText.str());
+            arEnabled_ = arConfig_.enabled;
+            arPlacement_.offset = arConfig_.offset;
+            arPlacement_.yaw = arConfig_.yawDeg * teleop::pi / 180;
+            arPlacement_.scale = arConfig_.scale;
         }
         panel_.demoMode = demoEnabled_ ? (robot_.frozenMode ? "FROZEN" : "LIVE") : "";
-        if (demoEnabled_ && !demoRenderer_.init(instance_, systemId_, session_)) {
+        if ((demoEnabled_ || arEnabled_) && !demoRenderer_.init(instance_, systemId_, session_)) {
             LOGE("Kinematic demo renderer initialization failed");
             return false;
+        }
+        if (arEnabled_) {
+            LOGI("Robot AR view: model %s state %s objects %s", arConfig_.modelUrl.c_str(),
+                 arConfig_.stateUrl.c_str(), arConfig_.objectsUrl.empty() ? "(in state)" : arConfig_.objectsUrl.c_str());
+            arClient_.start(arConfig_);
         }
         LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
         LOGI("Legacy %s logcat controller line %s", kControllerLogTag,
@@ -634,6 +649,7 @@ public:
     }
 
     void shutdown() {
+        arClient_.stop();
         controllerServer_.shutdown();
         demoRenderer_.shutdown();
         panel_.shutdown();
@@ -762,6 +778,7 @@ public:
         }
         const float held = shutdownHeldSince_ == 0 ? 0.0f :
             fminf(1.0f, static_cast<float>(now - shutdownHeldSince_) / 2000000000.0f);
+        if (arEnabled_) updateRobotAr(frameState.shouldRender);
         XrPosef hudPose{};
         hudPose.orientation.w = 1;
         hudPose.position.z = -1.4f;
@@ -792,8 +809,9 @@ public:
         std::vector<const XrCompositionLayerBaseHeader*> layers;
         if (frameState.shouldRender) {
             layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughComposition));
-            if (demoEnabled_) {
-                const auto* demoLayer = demoRenderer_.draw(session_, localSpace_, frameState.predictedDisplayTime, robot_);
+            if (demoEnabled_ || arEnabled_) {
+                const auto* demoLayer = demoRenderer_.draw(session_, localSpace_, frameState.predictedDisplayTime,
+                    demoEnabled_ ? &robot_ : nullptr, arEnabled_ ? &arWire_.segs : nullptr);
                 if (demoLayer) layers.push_back(demoLayer);
             }
             if (showPanel) layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panelLayer));
@@ -831,6 +849,24 @@ public:
     }
 
 private:
+    // Robot AR: newest snapshot from the background client -> HUD lines and
+    // world-space segments. Never blocks: the snapshot is a mutex-guarded copy.
+    void updateRobotAr(bool render) {
+        const auto snap = arClient_.snapshot();
+        const int64_t now = robot_ar::nowNs();
+        panel_.arLines = robot_ar::hudLines(snap, now);
+        if (snap.connected != arLoggedConnected_ || snap.error != arLoggedError_) {
+            LOGI("Robot AR %s%s%s", snap.connected ? "connected" : "disconnected",
+                 snap.error.empty() ? "" : ": ", snap.error.c_str());
+            arLoggedConnected_ = snap.connected;
+            arLoggedError_ = snap.error;
+        }
+        arWire_.clear();
+        if (render)
+            robot_ar::buildScene(arWire_, snap.model.get(), snap.state.get(), arPlacement_,
+                                 robot_ar::isStale(snap, now), snap.objects.get());
+    }
+
     android_app* app_ = nullptr;
     EglState egl_;
     StatusPanel panel_, leftMarker_, rightMarker_;
@@ -838,6 +874,12 @@ private:
     teleop::Intent operatorIntent_;
     teleop::Robot robot_;
     bool demoEnabled_ = false;
+    robot_ar::Config arConfig_;
+    robot_ar::Client arClient_;
+    robot_ar::Placement arPlacement_;
+    teleop::Wire arWire_;
+    bool arEnabled_ = false, arLoggedConnected_ = false;
+    std::string arLoggedError_;
     bool legacyLogcat_ = false;
     bool alignButtonDown_ = false;
     int64_t lastIntentSample_ = 0;
@@ -1366,6 +1408,9 @@ private:
         if (demoEnabled_) robot_.update(operatorIntent_, dt,
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
             getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_));
+        // Same placement convention and Y reset as the demo; reads input only.
+        if (arEnabled_) arPlacement_.update(operatorIntent_.session, operatorIntent_.operatorFromQuest,
+            teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_, getBool(yButtonAction_));
 
         // Historical logcat surface, opt-in via ~/.config/quest-env/legacy-logcat.
         if (legacyLogcat_) emitLegacyLogcat(leftActive, leftValid, leftLocation,

@@ -15,11 +15,15 @@
         fprintf(stderr, "\n");                                                                               \
     } while (0)
 #include "native/demo_renderer.h"
+#include "native/robot_ar_client.h"
+#include <thread>
 struct Swap {
     GLuint texture;
     int w, h;
 };
 std::vector<Swap> swaps;
+const char *previewName = "quest-demo-eye";
+long brightSum = 0; // Sum of RGB over all drawn pixels, all eyes.
 extern "C" {
 XrResult xrEnumerateViewConfigurationViews(XrInstance, XrSystemId, XrViewConfigurationType, uint32_t cap,
                                            uint32_t *n, XrViewConfigurationView *v) {
@@ -67,11 +71,13 @@ XrResult xrReleaseSwapchainImage(XrSwapchain s, const XrSwapchainImageReleaseInf
     assert(glGetError() == GL_NO_ERROR);
     int colored = 0;
     for (size_t i = 0; i < pixels.size(); i += 4)
-        if (pixels[i + 3])
+        if (pixels[i + 3]) {
             colored++;
+            brightSum += pixels[i] + pixels[i + 1] + pixels[i + 2];
+        }
     assert(colored > 1000);
     char file[100];
-    snprintf(file, sizeof(file), "/tmp/quest-demo-eye-%zu.ppm", reinterpret_cast<size_t>(s));
+    snprintf(file, sizeof(file), "/tmp/%s-%zu.ppm", previewName, reinterpret_cast<size_t>(s));
     FILE *f = fopen(file, "wb");
     fprintf(f, "P6\n%d %d\n255\n", v.w, v.h);
     for (int y = v.h - 1; y >= 0; y--)
@@ -106,7 +112,42 @@ XrResult xrLocateViews(XrSession, const XrViewLocateInfo *, XrViewState *s, uint
     return XR_SUCCESS;
 }
 }
-int main() {
+// Robot AR: fetch description + robot_state.v1 from `base` with the real client,
+// then render the placed robot fresh and stale (dimmed) through the same renderer.
+static void robotAr(DemoRenderer &renderer, const char *base) {
+    robot_ar::Client client;
+    client.start(robot_ar::parseConfig(std::string("url=") + base + "\n"));
+    robot_ar::Snapshot snap;
+    for (int i = 0; i < 250 && !(snap.model && snap.state); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        snap = client.snapshot();
+    }
+    client.stop();
+    assert(snap.model && snap.state);
+    // Same placement as the demo: head at 1.6 m, robot origin 1.6 m ahead on the floor.
+    teleop::Intent in;
+    robot_ar::Placement placement;
+    placement.update(1, in.operatorFromQuest, {0, 0, 1.6}, true, false);
+    teleop::Wire wire;
+    robot_ar::buildScene(wire, snap.model.get(), snap.state.get(), placement, false, snap.objects.get());
+    printf("Robot AR: model %s, %zu joints, %zu segments\n", snap.model->version.c_str(), snap.state->joints.size(),
+           wire.segs.size());
+    previewName = "quest-ar-eye";
+    brightSum = 0;
+    assert(renderer.draw({}, {}, {}, nullptr, &wire.segs));
+    long fresh = brightSum;
+    wire.clear();
+    robot_ar::buildScene(wire, snap.model.get(), snap.state.get(), placement, true, snap.objects.get());
+    previewName = "quest-ar-stale-eye";
+    brightSum = 0;
+    assert(renderer.draw({}, {}, {}, nullptr, &wire.segs));
+    printf("Robot AR stale/fresh brightness: %.2f\n", double(brightSum) / fresh);
+    assert(brightSum < fresh * 0.5);
+    // Nothing to draw: no layer.
+    std::vector<teleop::Segment> none;
+    assert(!renderer.draw({}, {}, {}, nullptr, &none));
+}
+int main(int argc, char **argv) {
     EGLDisplay d = eglGetPlatformDisplay(0x31DD, EGL_DEFAULT_DISPLAY, nullptr);
     assert(eglInitialize(d, nullptr, nullptr));
     EGLint attrs[] = {EGL_SURFACE_TYPE,
@@ -133,6 +174,8 @@ int main() {
     teleop::Robot robot;
     robot.reset({0, 0, 1.6});
     assert(renderer.draw({}, {}, {}, robot));
+    if (argc > 1)
+        robotAr(renderer, argv[1]);
     renderer.shutdown();
     eglMakeCurrent(d, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglDestroyContext(d, context);

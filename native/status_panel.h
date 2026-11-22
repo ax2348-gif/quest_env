@@ -2,6 +2,7 @@
 class StatusPanel {
 public:
     std::string demoMode;
+    std::vector<std::string> arLines; // Robot AR status, when that view is on.
     bool init(XrSession session, bool controller = false) {
         controllerMode = controller;
         width = controller ? 192 : 1024;
@@ -94,6 +95,10 @@ public:
                     text(28, 106, "KINEMATIC DEMO - " + demoMode + " BASE", 2);
                     text(28, 134, "GRIPS CLUTCH  TRIGGERS GRIPPERS", 2);
                     text(28, 162, "STICKS DRIVE/TURN  A ALIGN  Y RESET", 2);
+                }
+                for (size_t i = 0; i < arLines.size(); ++i) {
+                    green(0.45f);
+                    text(28, (demoMode.empty() ? 106 : 218) + 28 * static_cast<int>(i), arLines[i], 2);
                 }
                 if (!focused) {
                     green(0.42f);
