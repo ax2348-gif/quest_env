@@ -4,7 +4,7 @@
 // OpenXR or GL) so host tests cover parsing, FK, placement and staleness.
 //
 // Inputs (see ROBOT_AR.md):
-//   description  GET .../nodes/description/model/tree?variant=simple
+//   description  GET .../nodes/description/model/tree?variant=boxes (falls back to simple)
 //   state        robot_state.v1 JSON lines: {"t","seq","model_version",
 //                "base":[x,y,z,qx,qy,qz,qw], "joints":{name: q}, "overlays":{...},
 //                "objects":{name:{"pose":[7],"geom":{...}}}}
@@ -700,8 +700,9 @@ inline std::map<std::string, Pose> forwardKinematics(const Model &m, const State
 
 // ----------------------------------------------------------- placement ------
 // Where the sim world sits in the operator space. The origin is 1.6 m ahead of
-// the head along a heading and 1.6 m below it (a hypothetical floor); +x is the
-// heading. Offset (metres, in the placed frame), yaw (rad about up) and uniform
+// the head along a heading, at the floor height: the runtime's floor space
+// (re-read for every placement), or 1.6 m below the head when none is located
+// (floorEstimated); +x is the heading. Offset (metres, in the placed frame), yaw (rad about up) and uniform
 // scale from the config apply on top.
 // Every placement uses the head position and the head's gravity-aligned yaw at
 // that moment (the operator forward / A realignment never feeds it):
@@ -717,8 +718,12 @@ struct Placement {
     double yaw = 0, scale = 1;
     bool seqSeen = false, pending = false;
     int64_t lastSeq = 0;
-    void reset(V head, const M &heading) {
-        origin = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
+    bool floorEstimated = false; // The last placement used head - 1.6 m (no floor space).
+    // floor: the runtime's floor height (FLU z) when located, else null.
+    void reset(V head, const M &heading, const double *floor = nullptr) {
+        V ahead = head + heading * V{1.6, 0, 0};
+        origin = {{ahead.x, ahead.y, teleop::floorHeight(head, floor)}, heading};
+        floorEstimated = !floor;
         placed = true;
     }
     // Gravity-aligned yaw of the headset (head pose in LOCAL-FLU). Looking straight
@@ -733,11 +738,13 @@ struct Placement {
     // headFlu: head pose in LOCAL-FLU (teleop::operatorPose of the OpenXR pose).
     // resetSeq: the newest state's reset_seq, null when absent or no state yet.
     // aPress: A rising edge while input is focused. True when it re-anchored.
-    bool update(int64_t providerSession, const Pose &headFlu, bool headValid, const int64_t *resetSeq, bool aPress) {
+    // floor: the floor height re-read this frame (null when no floor space is located).
+    bool update(int64_t providerSession, const Pose &headFlu, bool headValid, const int64_t *resetSeq, bool aPress,
+                const double *floor = nullptr) {
         if (!placed || session != providerSession) {
             placed = false;
             if (headValid)
-                reset(headFlu.p, headYaw(headFlu));
+                reset(headFlu.p, headYaw(headFlu), floor);
             session = providerSession;
         }
         if (resetSeq) {
@@ -753,7 +760,7 @@ struct Placement {
         if (!pending || !headValid)
             return false;
         pending = false;
-        reset(headFlu.p, headYaw(headFlu));
+        reset(headFlu.p, headYaw(headFlu), floor);
         return true;
     }
     Pose world() const { return teleop::compose(origin, {offset, teleop::rotation({0, 0, 1}, yaw)}); }
@@ -820,7 +827,7 @@ inline Config parseConfig(const std::string &text) {
         base.pop_back();
     if (!base.empty()) {
         if (c.modelUrl.empty())
-            c.modelUrl = base + "/nodes/description/model/tree?variant=simple";
+            c.modelUrl = base + "/nodes/description/model/tree?variant=boxes";
         if (c.stateUrl.empty())
             c.stateUrl = base + "/nodes/sim/robot_state/stream?format=jsonl&hz=30";
     }

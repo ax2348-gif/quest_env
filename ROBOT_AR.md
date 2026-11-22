@@ -17,7 +17,7 @@ qr --scheme=body-frozen --ar=http://HOST[:PORT]        # HOST = the robot fronte
 
 | What | Default URL | Override |
 | --- | --- | --- |
-| Description | `<url>/nodes/description/model/tree?variant=simple` | `--ar-model=URL` |
+| Description | `<url>/nodes/description/model/tree?variant=boxes` (boxes as on the description page; falls back to `variant=simple`) | `--ar-model=URL` |
 | State stream | `<url>/nodes/sim/robot_state/stream?format=jsonl&hz=30` | `--ar-state=URL` |
 | Objects stream (optional) | objects inside the state lines | `--ar-objects=URL` |
 
@@ -38,6 +38,13 @@ forward, the AR scene along the head yaw), usually overlapping.
   pose, then each joint's origin and motion (revolute/continuous about the
   axis, prismatic along it, fixed; mimic joints follow their leader; joints
   missing from a state line read 0). Meshes are skipped in v1.
+- By default the description's `boxes` variant: the robot drawn with the
+  same boxes as the description node's page (arm links and fingers as boxes in
+  their link frames). If the node rejects that variant (4xx, a description
+  node that predates it), the client falls back once to `variant=simple`, logs
+  `Robot AR description: SIMPLE MODEL - NO BOXES (<url>)` and shows
+  `SIMPLE MODEL - NO BOXES` on the HUD. An `--ar-model` URL without
+  `variant=boxes` is used as given.
 - Colours come from the description's `rgba`; very dark colours are lifted to
   grey to stay visible over passthrough.
 - Overlays: target poses as small axes plus a green box (red when limited),
@@ -51,8 +58,14 @@ forward, the AR scene along the head yaw), usually overlapping.
 ## Placement
 
 Every placement uses the head at that moment: the sim world origin sits 1.6 m
-ahead of the head along the head's gravity-aligned yaw and 1.6 m below the head
-(a hypothetical floor, not detected ground); the sim's +x is that yaw. The
+ahead of the head along the head's gravity-aligned yaw, at the floor height;
+the sim's +x is that yaw. The floor is the runtime's floor space located in
+LOCAL (`LOCAL_FLOOR` via XR_EXT_local_floor when the runtime offers it,
+otherwise `STAGE`, the boundary floor), re-read at every placement, so a
+recentre or a redrawn boundary takes effect at the next reset. Only when no
+floor space is available or located is the floor estimated 1.6 m below the
+head; the HUD then shows `FLOOR EST`. Logcat names the space in use
+(`Floor reference space: ...`). The
 operator forward and A's realignment never feed it. Looking straight down or
 up, the headset's up/down vector gives the facing. Sim world: z up, metres.
 Operator space: the demo's FLU frame of OpenXR LOCAL.
@@ -94,7 +107,7 @@ differing). Connection changes are logged to logcat (`Robot AR ...`).
 
 The parser is tolerant; these are the shapes it is tested with.
 
-Description (`GET .../model/tree?variant=simple`):
+Description (`GET .../model/tree?variant=boxes|simple`):
 
 ```json
 {"model_version": "a1b2", "root": "base_link",
@@ -148,7 +161,8 @@ python3 tools/fake_robot_server.py --port 8765 --objects-inline   # a stand-in r
 waving arms with mimic fingers, EE target/command overlays, a base hint and a
 `limited` flag toggling every 5 s and a `reset_seq`, plus `/fake/bump` (new
 `model_version`), `/fake/reset` (`reset_seq` + 1), `/fake/pause` and
-`/fake/resume`; `--no-reset-seq` omits `reset_seq` like the real robot. `test_native_demo.py` renders the robot from
+`/fake/resume`; `--no-reset-seq` omits `reset_seq` like the real robot;
+`--no-boxes` rejects `variant=boxes` with 422 like today's description node. `test_native_demo.py` renders the robot from
 it through the real renderer: `/tmp/quest-ar-eye-{1,2}.ppm`, and dimmed
 `/tmp/quest-ar-stale-eye-{1,2}.ppm`.
 

@@ -50,6 +50,21 @@ with tempfile.TemporaryDirectory(prefix='quest-robot-ar-') as tmp:
         ROOT / 'test_robot_ar.cpp', '-o', binary)
     run(binary)
 
+    # Description variant: boxes by default; a node without it (4xx) -> simple, once, with a note.
+    for boxes in (True, False):
+        server = Server(boxes=boxes)
+        out = subprocess.run([str(binary), '--client', server.url, 'stats'], capture_output=True, text=True,
+                             timeout=20)
+        variants = list(server.server.variants)
+        server.stop()
+        assert out.returncode == 0, out.stdout
+        if boxes:
+            assert variants and set(variants) == {'boxes'} and 'note=-' in out.stdout, (variants, out.stdout)
+        else:
+            assert variants[:2] == ['boxes', 'simple'] and set(variants[2:]) <= {'simple'}, variants
+            assert 'note=SIMPLE MODEL - NO BOXES' in out.stdout, out.stdout
+        print('PASS description variant', 'boxes' if boxes else 'fallback to simple', '->', variants, flush=True)
+
     # Without reset_seq (the real robot) the client exposes none, so A re-anchors.
     server = Server(reset_seq=False)
     out = subprocess.run([str(binary), '--client', server.url, '2'], capture_output=True, text=True, timeout=20)

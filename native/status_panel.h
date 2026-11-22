@@ -3,6 +3,7 @@ class StatusPanel {
 public:
     std::string demoMode;
     std::vector<std::string> arLines; // Robot AR status, when that view is on.
+    bool floorEstimated = false;      // A placement used head - 1.6 m (no floor space).
     bool init(XrSession session, bool controller = false) {
         controllerMode = controller;
         width = controller ? 192 : 1024;
@@ -99,6 +100,10 @@ public:
                 for (size_t i = 0; i < arLines.size(); ++i) {
                     green(0.45f);
                     text(28, (demoMode.empty() ? 106 : 218) + 28 * static_cast<int>(i), arLines[i], 2);
+                }
+                if (floorEstimated) {
+                    green(0.45f);
+                    text(696, 646, "FLOOR EST", 2);
                 }
                 if (!focused) {
                     green(0.42f);

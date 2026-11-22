@@ -43,8 +43,10 @@ There are no tire forces or steering dynamics. The beveled chassis supports a
 
 The base arrow shows robot forward. A virtual ground
 grid stays fixed as the robot moves. Placement is 1.6 m along the calibrated operator forward
-(default OpenXR LOCAL -Z) from the first tracked head position, with ground 1.6 m below that head
-position. This is a hypothetical floor, not detected AR ground. Y resets placement
+(default OpenXR LOCAL -Z) from the first tracked head position, on the floor: the
+runtime's floor space (LOCAL_FLOOR, else STAGE) located in LOCAL and re-read at
+every placement; only without one is the ground estimated 1.6 m below the head
+(HUD `FLOOR EST`). The AR view uses the same floor. Y resets placement
 using the current head position and calibrated operator heading. A changes the
 control mapping only: it does not rotate or teleport the existing robot/grid.
 A LOCAL reference-space change resets the demo and invalidates clutch anchors.

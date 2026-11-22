@@ -213,6 +213,31 @@ static void testPlacement() {
     assert(!pl.update(8, head, true, &seq, false));
     assert(pl.placed && near(pl.origin.p, leftOrigin, 1e-6) && near(pl.origin.r, leftYaw, 1e-9));
     assert(!pl.update(8, ahead, true, &seq, false)); // Baseline kept across the session change.
+    // Floor: the runtime's floor height when given (re-read at each placement), else head - 1.6 m.
+    {
+        Placement f;
+        double floor = -1.2; // LOCAL-FLU z of the floor, head 1.7 m above LOCAL's origin.
+        teleop::Pose high = fluHead({0, .5f, 0}, M{});
+        assert(!f.update(1, high, true, nullptr, false, &floor));
+        assert(near(f.origin.p, V{1.6, 0, -1.2}, 1e-9) && !f.floorEstimated);
+        floor = -1.0; // Recentred / redrawn boundary: the next placement uses the new height.
+        assert(f.update(1, high, true, nullptr, true, &floor));
+        assert(near(f.origin.p, V{1.6, 0, -1.0}, 1e-9) && !f.floorEstimated);
+        assert(f.update(1, high, true, nullptr, true, nullptr)); // No floor space: estimate.
+        assert(near(f.origin.p, V{1.6, 0, .5 - 1.6}, 1e-6) && f.floorEstimated);
+        // The demo robot uses the same floor.
+        teleop::Intent in;
+        teleop::Hand none;
+        in.update(1, true, none, none);
+        teleop::Robot robot;
+        floor = -1.2;
+        robot.update(in, .01, high.p, true, false, false, &floor);
+        assert(near(robot.base.p, V{1.6, 0, -1.2}, 1e-6) && !robot.floorEstimated);
+        teleop::Robot guess;
+        guess.update(in, .01, high.p, true, false);
+        assert(near(guess.base.p.z, .5 - 1.6, 1e-6) && guess.floorEstimated);
+        assert(near(teleop::floorHeight({0, 0, 1.7}, nullptr), .1) && near(teleop::floorHeight({0, 0, 1.7}, &floor), -1.2));
+    }
     // Looking straight down or up, the headset's up/down vector gives the yaw.
     M down = rotation({0, 1, 0}, pi / 2) * rotation({1, 0, 0}, -pi / 2); // Facing LOCAL -X, nose down.
     assert(near(Placement::headYaw(fluHead({}, down)), rotation({0, 0, 1}, pi / 2), 1e-9));
@@ -233,17 +258,20 @@ static void testPlacement() {
     assert(near(q.map({{1, 0, 0}, {}}).p, V{1.6, 1, 0}, 1e-9));
     assert(near(q.map({{0, 0, 2}, {}}).p, V{1.6, .5, 1}, 1e-9));
     puts("PASS placement (head position + yaw for the first head, session change and resets; reset_seq "
-         "baseline/change, A only without reset_seq, no Y, untracked head, offset/yaw/scale)");
+         "baseline/change, A only without reset_seq, no Y, untracked head, floor height + estimate, offset/yaw/scale)");
 }
 
 static void testConfig() {
     Config c = parseConfig("url=http://erid:8080/\n");
-    assert(c.enabled && c.modelUrl == "http://erid:8080/nodes/description/model/tree?variant=simple");
+    assert(c.enabled && c.modelUrl == "http://erid:8080/nodes/description/model/tree?variant=boxes");
+    std::string fallback = c.modelUrl;
+    assert(boxesFallback(fallback) && fallback == "http://erid:8080/nodes/description/model/tree?variant=simple");
+    assert(!boxesFallback(fallback));
     assert(c.stateUrl == "http://erid:8080/nodes/sim/robot_state/stream?format=jsonl&hz=30");
     c = parseConfig("# x\nurl=http://a\nstate = http://robot:8200/robot_state/stream\nobjects=http://o/s\n"
                     "offset=0.5,-1,0.25\nyaw=90\nscale=0.5\n");
     assert(c.stateUrl == "http://robot:8200/robot_state/stream" && c.objectsUrl == "http://o/s");
-    assert(c.modelUrl == "http://a/nodes/description/model/tree?variant=simple");
+    assert(c.modelUrl == "http://a/nodes/description/model/tree?variant=boxes");
     assert(near(c.offset, V{.5, -1, .25}) && near(c.yawDeg, 90) && near(c.scale, .5));
     assert(!parseConfig("").enabled && !parseConfig("model=http://x/m\n").enabled);
     assert(near(parseConfig("url=http://a\nscale=-3\n").scale, 1));
@@ -346,6 +374,10 @@ static void testSceneAndStale() {
     assert(!isStale(snap, 1000000000LL + 400000000LL) && isStale(snap, 1000000000LL + 600000000LL));
     auto hud = hudLines(snap, 1000000000LL + 33000000LL);
     assert(hud[0] == "ROBOT AR OK 30 HZ 33 MS" && hud[1] == "LIMITED ");
+    snap.modelNote = "SIMPLE MODEL - NO BOXES";
+    hud = hudLines(snap, 1000000000LL + 33000000LL);
+    assert(hud[1] == "SIMPLE MODEL - NO BOXES" && hud[2] == "LIMITED ");
+    snap.modelNote.clear();
     hud = hudLines(snap, 1000000000LL + 2500000000LL);
     assert(hud[0] == "ROBOT AR STALE 2.5 S" && hud[1] == "CONNECTION REFUSED");
     assert(hudText("joint limit: q3!") == "JOINT LIMIT  Q3 ");
@@ -380,8 +412,9 @@ static int client(const char *base, const char *mode) {
     if (std::strcmp(mode, "stats") == 0 || std::strcmp(mode, "objects") == 0) {
         bool ok = wait(5, [](const Snapshot &s) { return s.model && s.state && s.fps > 20; });
         Snapshot s = cl.snapshot();
-        printf("connected=%d states=%llu fps=%.1f model=%s joints=%zu markers=%zu objects=%zu/%zu first=%.0fms\n",
+        printf("connected=%d states=%llu fps=%.1f model=%s note=%s joints=%zu markers=%zu objects=%zu/%zu first=%.0fms\n",
                s.connected, (unsigned long long)s.states, s.fps, s.model ? s.model->version.c_str() : "-",
+               s.modelNote.empty() ? "-" : hudText(s.modelNote).c_str(),
                s.state ? s.state->joints.size() : 0, s.state ? s.state->markers.size() : 0,
                s.state ? s.state->objects.size() : 0, s.objects ? s.objects->size() : 0, (nowNs() - t0) / 1e6);
         if (std::strcmp(mode, "objects") == 0)

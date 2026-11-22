@@ -379,7 +379,17 @@ struct Snapshot {
     bool connected = false;
     std::string error;
     uint64_t states = 0, modelFetches = 0;
+    std::string modelNote, modelUrl; // Set when the description fell back to variant=simple.
 };
+// variant=boxes -> variant=simple in place; false when the URL asks for no boxes.
+inline bool boxesFallback(std::string &url) {
+    const std::string from = "variant=boxes";
+    size_t at = url.find(from);
+    if (at == std::string::npos)
+        return false;
+    url.replace(at, from.size(), "variant=simple");
+    return true;
+}
 
 class ClientCore {
     Config config_;
@@ -415,7 +425,17 @@ class ClientCore {
             return;
         lastModelAttempt_ = now;
         std::string body, error;
-        if (!httpGet(config_.modelUrl, running_, body, error)) {
+        bool ok = httpGet(config_.modelUrl, running_, body, error);
+        // A description node without the boxes variant rejects it (4xx): use simple, once.
+        if (!ok && error.compare(0, 6, "HTTP 4") == 0 && boxesFallback(config_.modelUrl)) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                snap_.modelNote = "SIMPLE MODEL - NO BOXES";
+                snap_.modelUrl = config_.modelUrl;
+            }
+            ok = httpGet(config_.modelUrl, running_, body, error);
+        }
+        if (!ok) {
             setError("MODEL " + error);
             return;
         }
@@ -628,6 +648,8 @@ inline std::vector<std::string> hudLines(const Snapshot &s, int64_t now = nowNs(
         snprintf(buf, sizeof(buf), "ROBOT AR OK %.0f HZ %.0f MS%s", s.fps, age * 1000, s.model ? "" : " NO MODEL");
         out.push_back(buf);
     }
+    if (!s.modelNote.empty())
+        out.push_back(s.modelNote);
     if (s.state && s.state->limited)
         out.push_back(hudText("LIMITED " + s.state->reason));
     else if (s.state && !s.state->baseMode.empty())

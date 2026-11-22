@@ -2,7 +2,7 @@
 """A stand-in for the robot's description + robot_state.v1 endpoints (host tests).
 
 Serves, like the robot frontend (paths under /nodes/<node>):
-  GET /nodes/description/model/tree?variant=simple   the description (primitives)
+  GET /nodes/description/model/tree?variant=boxes    the description (boxes; simple: primitives)
   GET /nodes/sim/robot_state/stream?format=jsonl&hz=30       robot_state.v1 lines (chunked)
   GET /nodes/sim/objects/stream?format=jsonl&hz=10           {"objects": {...}} lines
   GET /fake/bump                                             new model_version (taller mast)
@@ -39,7 +39,18 @@ def origin(pos, quat=(0, 0, 0, 1)):
     return {"pos": list(pos), "quat": list(quat)}
 
 
-def model():
+def as_box(visual):
+    """The boxes variant draws like the description page: one box per primitive."""
+    if visual["type"] == "box":
+        return visual
+    r = visual.get("radius", 0.03)
+    length = visual.get("length", 0) + (2 * r if visual["type"] != "cylinder" else 0)
+    box = {k: v for k, v in visual.items() if k not in ("radius", "length")}
+    box.update(type="box", size=[2 * r, 2 * r, max(length, 2 * r)])
+    return box
+
+
+def model(variant="simple"):
     v = STATE["version"]
     mast = 0.55 + 0.1 * (v - 1)
     grey, cyan, amber, dark = [0.65, 0.8, 0.77, 1], [0.15, 0.85, 1, 1], [1, 0.62, 0.15, 1], [0.2, 0.2, 0.2, 1]
@@ -93,7 +104,11 @@ def model():
              "origin": origin([0, -0.01, 0]), "axis": [0, 1, 0], "lower": -0.04, "upper": 0,
              "mimic": {"joint": f"{a}_finger_a", "multiplier": -1, "offset": 0}},
         ]
-    return {"model_version": f"fake-{v}", "root": "base_link", "variant": "simple", "links": links,
+    if variant == "boxes":
+        for link in links:
+            if "_arm_" in link["name"]:
+                link["visuals"] = [as_box(x) for x in link["visuals"]]
+    return {"model_version": f"fake-{v}", "root": "base_link", "variant": variant, "links": links,
             "joints": joints}
 
 
@@ -196,9 +211,13 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(url.query)
         hz = min(120.0, max(1.0, float(query.get("hz", ["30"])[0])))
         if url.path in ("/nodes/description/model/tree", "/nodes/description/model"):
+            variant = query.get("variant", ["simple"])[0]
             with LOCK:
                 self.server.model_requests += 1
-                return self.send_json(model())
+                self.server.variants.append(variant)
+            if variant not in ("simple", "full", "boxes") or (variant == "boxes" and not self.server.boxes):
+                return self.send_error(422, "unknown variant")  # Like a node without that variant.
+            return self.send_json(model(variant))
         if url.path == "/nodes/sim/robot_state/stream":
             return self.stream(lambda seq, t: state(seq, t, self.server.objects_inline, self.server.reset_seq), hz)
         if url.path == "/nodes/sim/objects/stream":
@@ -223,13 +242,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=0, close_delimited=False, objects_inline=False, max_lines=0, verbose=False, host="127.0.0.1",
-          reset_seq=True):
+          reset_seq=True, boxes=True):
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.close_delimited, server.objects_inline = close_delimited, objects_inline
     server.max_lines, server.verbose, server.stopping = max_lines, verbose, False
     server.paused, server.model_requests = threading.Event(), 0
-    server.reset_seq = reset_seq
+    server.reset_seq, server.boxes, server.variants = reset_seq, boxes, []
     return server
 
 
@@ -239,11 +258,13 @@ def main():
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--close-delimited", action="store_true", help="no chunked encoding; end body at close")
     p.add_argument("--objects-inline", action="store_true", help="put objects in the state lines")
+    p.add_argument("--no-boxes", action="store_true", help="reject variant=boxes (422), like today's node")
     p.add_argument("--no-reset-seq", action="store_true", help="omit reset_seq, like the real robot (A re-anchors)")
     p.add_argument("--max-lines", type=int, default=0, help="end each stream after N lines (0 = never)")
     p.add_argument("--verbose", action="store_true")
     a = p.parse_args()
-    server = serve(a.port, a.close_delimited, a.objects_inline, a.max_lines, a.verbose, a.host, not a.no_reset_seq)
+    server = serve(a.port, a.close_delimited, a.objects_inline, a.max_lines, a.verbose, a.host, not a.no_reset_seq,
+                   not a.no_boxes)
     print(f"PORT {server.server_address[1]}", flush=True)
     try:
         server.serve_forever()

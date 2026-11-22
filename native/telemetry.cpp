@@ -670,6 +670,10 @@ public:
             if (localSpace_ != XR_NULL_HANDLE) {
                 xrDestroySpace(localSpace_);
             }
+            if (floorSpace_ != XR_NULL_HANDLE) {
+                xrDestroySpace(floorSpace_);
+                floorSpace_ = XR_NULL_HANDLE;
+            }
             if (viewSpace_ != XR_NULL_HANDLE) {
                 xrDestroySpace(viewSpace_);
             }
@@ -779,6 +783,8 @@ public:
         const float held = shutdownHeldSince_ == 0 ? 0.0f :
             fminf(1.0f, static_cast<float>(now - shutdownHeldSince_) / 2000000000.0f);
         if (arEnabled_) updateRobotAr(frameState.shouldRender);
+        panel_.floorEstimated = (demoEnabled_ && robot_.placed && robot_.floorEstimated) ||
+                                (arEnabled_ && arPlacement_.placed && arPlacement_.floorEstimated);
         XrPosef hudPose{};
         hudPose.orientation.w = 1;
         hudPose.position.z = -1.4f;
@@ -861,6 +867,10 @@ private:
             arLoggedConnected_ = snap.connected;
             arLoggedError_ = snap.error;
         }
+        if (snap.modelNote != arLoggedNote_) {
+            LOGW("Robot AR description: %s (%s)", snap.modelNote.c_str(), snap.modelUrl.c_str());
+            arLoggedNote_ = snap.modelNote;
+        }
         arWire_.clear();
         if (render)
             robot_ar::buildScene(arWire_, snap.model.get(), snap.state.get(), arPlacement_,
@@ -879,7 +889,7 @@ private:
     robot_ar::Placement arPlacement_;
     teleop::Wire arWire_;
     bool arEnabled_ = false, arLoggedConnected_ = false;
-    std::string arLoggedError_;
+    std::string arLoggedError_, arLoggedNote_;
     bool legacyLogcat_ = false;
     bool alignButtonDown_ = false;
     int64_t lastIntentSample_ = 0;
@@ -899,6 +909,11 @@ private:
     bool sessionRunning_ = false;
     bool handTrackingEnabled_ = false;
     bool touchPlusEnabled_ = false;
+    bool localFloorEnabled_ = false;
+    XrSpace floorSpace_ = XR_NULL_HANDLE; // LOCAL_FLOOR or STAGE: its origin's height is the floor.
+    const char* floorSpaceName_ = "none";
+    double floorZ_ = 0;                   // Floor height in LOCAL-FLU (LOCAL y), metres.
+    bool floorValid_ = false, floorLoggedValid_ = false, floorLogged_ = false;
     bool enableHandTelemetry_ = false;
     int64_t providerSessionId_ = monotonicNs();
     uint64_t controllerFrameSeq_ = 0;
@@ -984,6 +999,11 @@ private:
             return false;
         }
         extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+        // Floor height for placing the demo robot / AR scene (LOCAL_FLOOR; STAGE otherwise).
+        if (isExtensionAvailable(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME)) {
+            extensions.push_back(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
+            localFloorEnabled_ = true;
+        }
         if (isExtensionAvailable(kTouchPlusExtension)) {
             extensions.push_back(kTouchPlusExtension);
             touchPlusEnabled_ = true;
@@ -1115,6 +1135,31 @@ private:
         XR_CHECK(xrCreateReferenceSpace(session_, &spaceInfo, &localSpace_));
         spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
         XR_CHECK(xrCreateReferenceSpace(session_, &spaceInfo, &viewSpace_));
+        // A floor-level space located in LOCAL gives the real floor height.
+        uint32_t count = 0;
+        std::vector<XrReferenceSpaceType> types;
+        if (XR_CHECK(xrEnumerateReferenceSpaces(session_, 0, &count, nullptr)) && count) {
+            types.resize(count);
+            if (!XR_CHECK(xrEnumerateReferenceSpaces(session_, count, &count, types.data()))) types.clear();
+        }
+        auto has = [&](XrReferenceSpaceType t) {
+            for (auto x : types) if (x == t) return true;
+            return false;
+        };
+        const struct { XrReferenceSpaceType type; const char* name; bool usable; } candidates[] = {
+            {XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT, "LOCAL_FLOOR", localFloorEnabled_},
+            {XR_REFERENCE_SPACE_TYPE_STAGE, "STAGE", true},
+        };
+        for (const auto& c : candidates) {
+            if (!c.usable || !has(c.type)) continue;
+            spaceInfo.referenceSpaceType = c.type;
+            if (XR_SUCCEEDED(xrCreateReferenceSpace(session_, &spaceInfo, &floorSpace_))) {
+                floorSpaceName_ = c.name;
+                break;
+            }
+            floorSpace_ = XR_NULL_HANDLE;
+        }
+        LOGI("Floor reference space: %s (fallback: head - 1.6 m)", floorSpaceName_);
     }
 
     void rotateProviderSession(const char* reason) {
@@ -1405,9 +1450,28 @@ private:
         operatorIntent_.update(providerSessionId_, sessionState_ == XR_SESSION_STATE_FOCUSED &&
             actionSyncResult_ == XR_SUCCESS, input[0], input[1], gap,
             headTracked_ ? &headForAlignment : nullptr, alignEdge);
+        // Floor height, re-read every frame so each placement uses the current one
+        // (the user may recentre or redraw the boundary).
+        floorValid_ = false;
+        if (floorSpace_ != XR_NULL_HANDLE) {
+            XrSpaceLocation floor{XR_TYPE_SPACE_LOCATION};
+            if (XR_SUCCEEDED(xrLocateSpace(floorSpace_, localSpace_, time, &floor)) &&
+                (floor.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+                std::isfinite(floor.pose.position.y)) {
+                floorZ_ = floor.pose.position.y; // LOCAL +Y is operator-FLU +Z.
+                floorValid_ = true;
+            }
+        }
+        if (!floorLogged_ || floorValid_ != floorLoggedValid_) {
+            LOGI("Floor %s: %s%.3f m in LOCAL", floorSpaceName_, floorValid_ ? "" : "unavailable, last ",
+                 floorZ_);
+            floorLogged_ = true;
+            floorLoggedValid_ = floorValid_;
+        }
+        const double* floorZ = floorValid_ ? &floorZ_ : nullptr;
         if (demoEnabled_) robot_.update(operatorIntent_, dt,
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
-            getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_));
+            getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_), floorZ);
         // AR scene anchoring (robot_ar.h Placement): reads input only. Y is not used:
         // a reset is a reset_seq change, or A when the state carries no reset_seq.
         if (arEnabled_) {
@@ -1417,7 +1481,7 @@ private:
             const bool inputFocused = sessionState_ == XR_SESSION_STATE_FOCUSED && actionSyncResult_ == XR_SUCCESS;
             if (arPlacement_.update(operatorIntent_.session,
                     teleop::operatorPose(DemoRenderer::pose(headPose_)), headTracked_,
-                    hasSeq ? &seq : nullptr, alignEdge && inputFocused))
+                    hasSeq ? &seq : nullptr, alignEdge && inputFocused, floorZ))
                 LOGI("Robot AR re-anchored at head yaw (%s)", hasSeq ? "reset_seq" : "A");
         }
 

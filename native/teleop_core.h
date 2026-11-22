@@ -452,6 +452,9 @@ struct SwerveModule {
         phase = std::remainder(phase - speed * dt / radius, 2 * pi);
     }
 };
+// Floor height (operator/LOCAL-FLU z) for a placement: the runtime's floor
+// space when one is located, else an estimate 1.6 m below the head.
+inline double floorHeight(V head, const double *floor) { return floor ? *floor : head.z - 1.6; }
 struct Robot {
     Arm arms[2] = {Arm(1), Arm(-1)};
     Pose base;
@@ -519,8 +522,11 @@ struct Robot {
         autoVelocity = autoVelocity + change * (amount > limit ? limit / amount : 1.);
         return transpose(base.r) * autoVelocity;
     }
-    void reset(V head, M heading = {}) {
-        base = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
+    bool floorEstimated = false; // The last placement used head - 1.6 m (no floor space).
+    void reset(V head, M heading = {}, const double *floor = nullptr) {
+        V ahead = head + heading * V{1.6, 0, 0};
+        base = {{ahead.x, ahead.y, floorHeight(head, floor)}, heading};
+        floorEstimated = !floor;
         for (auto &wheel : wheels) {
             wheel.steering = wheel.speed = wheel.phase = 0;
         }
@@ -532,17 +538,17 @@ struct Robot {
         placed = true;
     }
     void update(const Intent &in, double dt, V head, bool headValid, bool resetButton,
-                bool autoButton = false) {
+                bool autoButton = false, const double *floor = nullptr) {
         if (!placed || session != in.session) {
             placed = false;
             if (headValid)
-                reset(head, questToBase() * transpose(in.operatorFromQuest));
+                reset(head, questToBase() * transpose(in.operatorFromQuest), floor);
             session = in.session;
         }
         bool resetting = resetButton && !resetDown;
         resetDown = resetButton;
         if (resetting && headValid) {
-            reset(head, questToBase() * transpose(in.operatorFromQuest));
+            reset(head, questToBase() * transpose(in.operatorFromQuest), floor);
             for (int i = 0; i < 2; i++)
                 arms[i].seen = in.hands[i].id;
         }
