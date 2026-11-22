@@ -124,10 +124,11 @@ static void robotAr(DemoRenderer &renderer, const char *base) {
     }
     client.stop();
     assert(snap.model && snap.state);
-    // Same placement as the demo: head at 1.6 m, robot origin 1.6 m ahead on the floor.
-    teleop::Intent in;
+    // The mock camera's head: LOCAL (0, 1.6, 0) facing LOCAL -Z. The origin lands 1.6 m
+    // ahead along its yaw on the floor, where the demo robot is drawn too.
     robot_ar::Placement placement;
-    placement.update(1, in.operatorFromQuest, {{0, 0, 1.6}, {}}, true, nullptr, false);
+    placement.update(1, teleop::operatorPose({{0, 1.6, 0}, {}}), true, nullptr, false);
+    assert(placement.placed);
     teleop::Wire wire;
     robot_ar::buildScene(wire, snap.model.get(), snap.state.get(), placement, false, snap.objects.get());
     printf("Robot AR: model %s, %zu joints, %zu segments\n", snap.model->version.c_str(), snap.state->joints.size(),

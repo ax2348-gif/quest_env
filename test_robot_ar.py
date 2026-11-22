@@ -61,8 +61,8 @@ with tempfile.TemporaryDirectory(prefix='quest-robot-ar-') as tmp:
     source = (ROOT / 'native/telemetry.cpp').read_text()
     call = source[source.index('arPlacement_.update('):]
     call = call[:call.index(';')]
-    assert 'yButton' not in call and 'alignEdge && inputFocused' in call, call
-    print('PASS AR placement inputs: no Y; A only as the reset press', flush=True)
+    assert 'yButton' not in call and 'operatorFromQuest' not in call and 'alignEdge && inputFocused' in call, call
+    print('PASS AR placement inputs: no Y, no operator forward; A only as the reset press', flush=True)
 
     for options in ({}, {'close_delimited': True}, {'objects_inline': True}):
         server = Server(**options)

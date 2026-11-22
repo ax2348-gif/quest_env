@@ -1415,7 +1415,7 @@ private:
             const bool hasSeq = snap.state && snap.state->hasResetSeq;
             const int64_t seq = hasSeq ? snap.state->resetSeq : 0;
             const bool inputFocused = sessionState_ == XR_SESSION_STATE_FOCUSED && actionSyncResult_ == XR_SUCCESS;
-            if (arPlacement_.update(operatorIntent_.session, operatorIntent_.operatorFromQuest,
+            if (arPlacement_.update(operatorIntent_.session,
                     teleop::operatorPose(DemoRenderer::pose(headPose_)), headTracked_,
                     hasSeq ? &seq : nullptr, alignEdge && inputFocused))
                 LOGI("Robot AR re-anchored at head yaw (%s)", hasSeq ? "reset_seq" : "A");

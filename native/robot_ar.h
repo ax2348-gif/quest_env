@@ -703,12 +703,12 @@ inline std::map<std::string, Pose> forwardKinematics(const Model &m, const State
 // the head along a heading and 1.6 m below it (a hypothetical floor); +x is the
 // heading. Offset (metres, in the placed frame), yaw (rad about up) and uniform
 // scale from the config apply on top.
-//  - First tracked head and provider-session (LOCAL reference-space) change:
-//    placed as the demo does, heading = calibrated operator forward.
-//  - Reset: re-anchored at the head with heading = the head's gravity-aligned
-//    yaw at that moment. A reset is a change of the state's reset_seq (the
-//    first value seen is only a baseline), or, when the state carries no
-//    reset_seq, an A press (focused, head tracked). Y does nothing here.
+// Every placement uses the head position and the head's gravity-aligned yaw at
+// that moment (the operator forward / A realignment never feeds it):
+//  - the first tracked head, and a provider-session (LOCAL reference-space) change;
+//  - a reset: a change of the state's reset_seq (the first value seen is only a
+//    baseline), or, when the state carries no reset_seq, an A press (focused,
+//    head tracked). Y does nothing here.
 struct Placement {
     bool placed = false;
     int64_t session = 0;
@@ -720,10 +720,6 @@ struct Placement {
     void reset(V head, const M &heading) {
         origin = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
         placed = true;
-    }
-    // The demo's heading: calibrated operator forward expressed in LOCAL-FLU.
-    static M heading(const M &operatorFromQuest) {
-        return teleop::questToBase() * teleop::transpose(operatorFromQuest);
     }
     // Gravity-aligned yaw of the headset (head pose in LOCAL-FLU). Looking straight
     // down or up, the headset's up (or down) vector gives the facing instead.
@@ -737,12 +733,11 @@ struct Placement {
     // headFlu: head pose in LOCAL-FLU (teleop::operatorPose of the OpenXR pose).
     // resetSeq: the newest state's reset_seq, null when absent or no state yet.
     // aPress: A rising edge while input is focused. True when it re-anchored.
-    bool update(int64_t providerSession, const M &operatorFromQuest, const Pose &headFlu, bool headValid,
-                const int64_t *resetSeq, bool aPress) {
+    bool update(int64_t providerSession, const Pose &headFlu, bool headValid, const int64_t *resetSeq, bool aPress) {
         if (!placed || session != providerSession) {
             placed = false;
             if (headValid)
-                reset(headFlu.p, heading(operatorFromQuest));
+                reset(headFlu.p, headYaw(headFlu));
             session = providerSession;
         }
         if (resetSeq) {

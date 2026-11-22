@@ -28,7 +28,8 @@ URLs are plain `http://` (no TLS, no credentials). A launch without `--ar`
 turns the view off. The options are written to
 `~/.config/quest-env/robot-ar` (one `key=value` per line) and read once at
 native start-up; `-s` (the local kinematic demo) can be combined, but both
-robots are then placed at the same spot.
+robots are then placed in front of the operator (the demo along the operator
+forward, the AR scene along the head yaw), usually overlapping.
 
 ## What is drawn
 
@@ -49,18 +50,18 @@ robots are then placed at the same spot.
 
 ## Placement
 
-The sim world origin sits 1.6 m ahead of the head along a heading and 1.6 m
-below the head (a hypothetical floor, not detected ground); the sim's +x is that
-heading. Sim world: z up, metres. Operator space: the demo's FLU frame of
-OpenXR LOCAL.
+Every placement uses the head at that moment: the sim world origin sits 1.6 m
+ahead of the head along the head's gravity-aligned yaw and 1.6 m below the head
+(a hypothetical floor, not detected ground); the sim's +x is that yaw. The
+operator forward and A's realignment never feed it. Looking straight down or
+up, the headset's up/down vector gives the facing. Sim world: z up, metres.
+Operator space: the demo's FLU frame of OpenXR LOCAL.
 
-- **First tracked head** and **LOCAL reference-space change**: placed as the
-  kinematic demo is, heading = the calibrated operator forward (OpenXR LOCAL -Z
-  at those moments, since a new provider session resets the calibration).
-- **Reset** re-anchors the scene at the current head, heading = the head's
-  gravity-aligned yaw at that moment (not the operator forward and not A's
-  realignment; looking straight down or up, the headset's up/down vector
-  gives the facing). A reset is:
+The scene is placed:
+
+- at the **first tracked head**, and again after a **LOCAL reference-space
+  change**;
+- on a **reset**, which is:
   - a change of `reset_seq` in the state lines (the sim's reset). The first
     value seen is only a baseline; a missing or unchanged `reset_seq` never
     re-anchors. A change seen while the head is untracked is applied once
@@ -68,9 +69,10 @@ OpenXR LOCAL.
   - an **A** press (rising edge, XR input focused, head tracked) when the state
     lines carry no `reset_seq` (the real robot: there A only re-anchors the AR
     scene). With `reset_seq` present, A does nothing here.
-- **Y** does nothing to the scene. In the standard scheme A also realigns the
-  operator forward (unchanged); in body-frozen it does not (see DEMO.md).
-- Logcat: `Robot AR re-anchored at head yaw (reset_seq|A)`.
+
+**Y** does nothing to the scene. In the standard scheme A also realigns the
+operator forward (unchanged); in body-frozen it does not (see DEMO.md).
+Logcat: `Robot AR re-anchored at head yaw (reset_seq|A)`.
 
 ## Status and robustness
 

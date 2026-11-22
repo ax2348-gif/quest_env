@@ -420,7 +420,7 @@ The initial usable version is tagged `initial-usable-teleop-v1`.
 
 `qr --ar=http://HOST[:PORT]` draws the robot from its description and
 `robot_state.v1` stream (the robot_utils simulator today) as a wireframe over
-passthrough, placed like the demo at start. A sim reset (`reset_seq`) or, without
-one, A re-anchors it at the head's yaw; Y does nothing to it. It coexists with
+passthrough, 1.6 m ahead along the head's yaw at the first tracked head; a sim
+reset (`reset_seq`) or, without one, A re-anchors it the same way; Y does nothing to it. It coexists with
 telemetry and either teleop scheme and does not change the telemetry records. See
 [ROBOT_AR.md](ROBOT_AR.md) for options, endpoint formats and validation.

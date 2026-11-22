@@ -163,59 +163,56 @@ static teleop::Pose fluHead(V questPos, const M &questRot) { return teleop::oper
 static void testPlacement() {
     using teleop::rotation;
     const double pi = teleop::pi;
-    // First tracked head: the demo's placement (calibrated operator forward), whatever the head yaw.
-    teleop::Intent in;
-    teleop::Hand none;
-    in.update(7, true, none, none);
+    // Every placement = head position + the head's gravity-aligned yaw at that moment;
+    // Placement::update takes no operator forward, so A's realignment cannot feed it.
     // Quest head at LOCAL (0.1, 1.7, -0.2) looking along LOCAL -X (operator left), pitched down.
     M lookLeft = rotation({0, 1, 0}, pi / 2) * rotation({1, 0, 0}, -.3);
     teleop::Pose head = fluHead({.1f, 1.7f, -.2f}, lookLeft);
     assert(near(head.p, V{.2, -.1, 1.7}, 1e-6));
-    teleop::Robot robot;
-    robot.update(in, .01, head.p, true, false);
-    Placement pl;
-    assert(!pl.update(7, in.operatorFromQuest, head, true, nullptr, false));
-    assert(pl.placed && near(pl.origin.p, robot.base.p) && near(pl.origin.r, robot.base.r));
-    assert(near(pl.origin.p, V{1.8, -.1, .1}, 1e-6));
-    // Nothing pressed, no reset_seq: stays put (Y is not an input any more).
-    for (int i = 0; i < 3; i++)
-        assert(!pl.update(7, in.operatorFromQuest, fluHead({3, 1.6f, 3}, M{}), true, nullptr, false));
-    assert(near(pl.origin.p, V{1.8, -.1, .1}, 1e-6));
-    // Without reset_seq, A re-anchors at the head's gravity-aligned yaw, not the operator forward.
-    assert(pl.update(7, in.operatorFromQuest, head, true, nullptr, true));
-    assert(near(pl.origin.r, rotation({0, 0, 1}, pi / 2), 1e-9));
-    assert(near(pl.origin.p, V{.2, 1.5, .1}, 1e-6));
-    // A while the head is untracked is ignored, not deferred.
+    const V leftOrigin{.2, 1.5, .1}, aheadOrigin{1.6, 0, 0};
+    const M leftYaw = rotation({0, 0, 1}, pi / 2);
     teleop::Pose ahead = fluHead({0, 1.6f, 0}, M{});
-    assert(!pl.update(7, in.operatorFromQuest, ahead, false, nullptr, true));
-    assert(!pl.update(7, in.operatorFromQuest, ahead, true, nullptr, false));
-    assert(near(pl.origin.p, V{.2, 1.5, .1}, 1e-6));
+    // First tracked head: placed at the head yaw (1.6 m to the operator's left here).
+    Placement pl;
+    assert(!pl.update(7, head, false, nullptr, false) && !pl.placed);
+    assert(!pl.update(7, head, true, nullptr, false));
+    assert(pl.placed && near(pl.origin.p, leftOrigin, 1e-6) && near(pl.origin.r, leftYaw, 1e-9));
+    // Nothing pressed, no reset_seq: stays put whatever the head does (Y is not an input).
+    for (int i = 0; i < 3; i++)
+        assert(!pl.update(7, ahead, true, nullptr, false));
+    assert(near(pl.origin.p, leftOrigin, 1e-6));
+    // Without reset_seq, A re-anchors at the head yaw.
+    assert(pl.update(7, ahead, true, nullptr, true));
+    assert(near(pl.origin.r, M{}, 1e-9) && near(pl.origin.p, aheadOrigin, 1e-6));
+    // A while the head is untracked is ignored, not deferred.
+    assert(!pl.update(7, head, false, nullptr, true));
+    assert(!pl.update(7, head, true, nullptr, false));
+    assert(near(pl.origin.p, aheadOrigin, 1e-6));
     // The first reset_seq is a baseline only; unchanged values do nothing; A is ignored with reset_seq.
     int64_t seq = 5;
-    assert(!pl.update(7, in.operatorFromQuest, ahead, true, &seq, false));
-    assert(!pl.update(7, in.operatorFromQuest, ahead, true, &seq, true));
-    assert(near(pl.origin.p, V{.2, 1.5, .1}, 1e-6));
-    // A changed reset_seq re-anchors at the head yaw, even with a realigned operator forward.
-    teleop::Pose lookRight{{0, 0, 0}, rotation({0, 1, 0}, -pi / 2)};
-    assert(in.realign(lookRight));
+    assert(!pl.update(7, head, true, &seq, false));
+    assert(!pl.update(7, head, true, &seq, true));
+    assert(near(pl.origin.p, aheadOrigin, 1e-6));
+    // A changed reset_seq re-anchors at the head yaw.
     seq = 6;
-    assert(pl.update(7, in.operatorFromQuest, ahead, true, &seq, false));
-    assert(near(pl.origin.r, M{}, 1e-9) && near(pl.origin.p, V{1.6, 0, 0}, 1e-6));
+    assert(pl.update(7, head, true, &seq, false));
+    assert(near(pl.origin.r, leftYaw, 1e-9) && near(pl.origin.p, leftOrigin, 1e-6));
     // A change while the head is untracked is applied once tracking returns.
     seq = 7;
-    assert(!pl.update(7, in.operatorFromQuest, head, false, &seq, false));
-    assert(near(pl.origin.p, V{1.6, 0, 0}, 1e-6));
-    assert(pl.update(7, in.operatorFromQuest, head, true, &seq, false));
-    assert(near(pl.origin.p, V{.2, 1.5, .1}, 1e-6));
+    assert(!pl.update(7, ahead, false, &seq, false));
+    assert(near(pl.origin.p, leftOrigin, 1e-6));
+    assert(pl.update(7, ahead, true, &seq, false));
+    assert(near(pl.origin.p, aheadOrigin, 1e-6));
     // A missing reset_seq (stream gap) neither re-anchors nor resets the baseline.
-    assert(!pl.update(7, in.operatorFromQuest, ahead, true, nullptr, false));
-    assert(!pl.update(7, in.operatorFromQuest, ahead, true, &seq, false));
-    // A LOCAL reference-space change (provider session) re-places the demo way.
-    in.update(8, true, none, none); // A new session resets the operator forward.
-    assert(!pl.update(8, in.operatorFromQuest, ahead, false, &seq, false));
+    assert(!pl.update(7, head, true, nullptr, false));
+    assert(!pl.update(7, head, true, &seq, false));
+    assert(near(pl.origin.p, aheadOrigin, 1e-6));
+    // A LOCAL reference-space change (provider session) re-places at the head yaw too.
+    assert(!pl.update(8, head, false, &seq, false));
     assert(!pl.placed);
-    assert(!pl.update(8, in.operatorFromQuest, ahead, true, &seq, false));
-    assert(pl.placed && near(pl.origin.p, V{1.6, 0, 0}, 1e-6) && near(pl.origin.r, M{}, 1e-9));
+    assert(!pl.update(8, head, true, &seq, false));
+    assert(pl.placed && near(pl.origin.p, leftOrigin, 1e-6) && near(pl.origin.r, leftYaw, 1e-9));
+    assert(!pl.update(8, ahead, true, &seq, false)); // Baseline kept across the session change.
     // Looking straight down or up, the headset's up/down vector gives the yaw.
     M down = rotation({0, 1, 0}, pi / 2) * rotation({1, 0, 0}, -pi / 2); // Facing LOCAL -X, nose down.
     assert(near(Placement::headYaw(fluHead({}, down)), rotation({0, 0, 1}, pi / 2), 1e-9));
@@ -235,8 +232,8 @@ static void testPlacement() {
     q.scale = .5;
     assert(near(q.map({{1, 0, 0}, {}}).p, V{1.6, 1, 0}, 1e-9));
     assert(near(q.map({{0, 0, 2}, {}}).p, V{1.6, .5, 1}, 1e-9));
-    puts("PASS placement (first head as the demo, reset_seq baseline/change at head yaw, A only without "
-         "reset_seq, no Y, untracked head, session change, offset/yaw/scale)");
+    puts("PASS placement (head position + yaw for the first head, session change and resets; reset_seq "
+         "baseline/change, A only without reset_seq, no Y, untracked head, offset/yaw/scale)");
 }
 
 static void testConfig() {
