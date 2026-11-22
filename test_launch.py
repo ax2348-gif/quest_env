@@ -35,7 +35,8 @@ with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run(['sh', str(ROOT/'quest'), *args], capture_output=True,
                                   env=settings, timeout=5)
         request = directory / '.config/quest-env/restore-terminal-once'
-        expected_request = tty and not failure and '--no-viewer' not in args and '--typo' not in args
+        rejected = '--typo' in args or any(a.startswith('--ar') for a in args) and proc.returncode == 2
+        expected_request = tty and not failure and '--no-viewer' not in args and not rejected
         assert request.exists() == expected_request, (args, request.exists())
         return proc.returncode, log.read_text()
 
@@ -56,4 +57,23 @@ with tempfile.TemporaryDirectory() as tmp:
         assert (directory / '.config/quest-env/demo-mode').read_text().strip() == mode
     code, calls = invoke(['run', '--typo'])
     assert code == 2 and not calls
-print('PASS: TTY default viewer, --no-viewer, noninteractive use, native failure, invalid flags')
+    # Robot AR view: a config file per launch; absent without --ar.
+    ar = directory / '.config/quest-env/robot-ar'
+    code, calls = invoke(['run', '--scheme=body-frozen', '--ar=http://erid:8080', '--ar-offset=0,0.5,0',
+                          '--ar-yaw=90', '--ar-scale=0.5', '--no-viewer'])
+    assert code == 0, calls
+    assert ar.read_text() == 'url=http://erid:8080\noffset=0,0.5,0\nyaw=90\nscale=0.5\n', ar.read_text()
+    assert (directory / '.config/quest-env/demo-mode').read_text().strip() == 'off body-frozen'
+    assert oct(ar.stat().st_mode & 0o777) == '0o600'
+    code, calls = invoke(['run', '--sim-ar=http://10.0.0.5:80', '--ar-state=http://robot:8200/robot_state/stream',
+                          '-s', '--no-viewer'])
+    assert code == 0 and 'state=http://robot:8200/robot_state/stream' in ar.read_text(), calls
+    code, calls = invoke(['run', '--no-viewer'])
+    assert code == 0 and not ar.exists()
+    for bad in (['--ar=https://x'], ['--ar=http://a b'], ['--ar=http://a\nstate=http://evil'], ['--ar-yaw=5'],
+                ['--ar='], ['--ar-model=ftp://x', '--ar=http://a']):
+        code, calls = invoke(['run', '--no-viewer', *bad])
+        assert code == 2 and not calls and not ar.exists(), bad
+    code, calls = invoke(['builtin', '--no-viewer', '--ar=http://a'])
+    assert code == 2 and not calls
+print('PASS: TTY default viewer, --no-viewer, noninteractive use, native failure, invalid flags, robot AR config')

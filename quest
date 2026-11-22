@@ -16,19 +16,51 @@ launch() {
     demo=off
     base_frame=live
     scheme=standard
+    ar_lines=""
     for option in "$@"; do
         case "$option" in
+            --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
+                value="${option#*=}"
+                case "$value" in
+                    # One config line per option: no empty values, blanks or newlines.
+                    ""|*" "*|*"	"*|*"
+"*) echo "Invalid value in $option" >&2; exit 2 ;;
+                esac
+                case "${option%%=*}" in
+                    --ar|--sim-ar) key=url ;;
+                    --ar-model) key=model ;;
+                    --ar-state) key=state ;;
+                    --ar-objects) key=objects ;;
+                    --ar-offset) key=offset ;;
+                    --ar-yaw) key=yaw ;;
+                    --ar-scale) key=scale ;;
+                esac
+                case "$key" in
+                    url|model|state|objects)
+                        case "$value" in http://*) ;; *) echo "$option needs an http:// URL" >&2; exit 2 ;; esac ;;
+                esac
+                ar_lines="$ar_lines$key=$value
+" ;;
             --no-viewer) viewer=no ;;
             -s|--sim) demo=on ;;
             --scheme=body-frozen) scheme=body-frozen ;;
             --scheme=standard) scheme=standard ;;
             --base-frame=live) base_frame=live ;;
             --base-frame=frozen) base_frame=frozen ;;
-            *) echo "Unknown option: $option (use -s, --scheme=standard|body-frozen, --base-frame=live|frozen, --no-viewer)" >&2; exit 2 ;;
+            *) echo "Unknown option: $option (use -s, --scheme=standard|body-frozen, --base-frame=live|frozen, --ar=URL, --no-viewer)" >&2; exit 2 ;;
         esac
     done
     if [ "$operation" = builtin ] && [ "$demo" = on ]; then
         echo "The bundled APK library has no demo; use q run -s." >&2; exit 2
+    fi
+    if [ -n "$ar_lines" ]; then
+        case "$ar_lines" in
+            *url=*|*state=*) ;;
+            *) echo "--ar-* options need --ar=URL or --ar-state=URL" >&2; exit 2 ;;
+        esac
+        if [ "$operation" = builtin ]; then
+            echo "The bundled APK library has no robot AR view; use q run --ar=URL." >&2; exit 2
+        fi
     fi
     # Noninteractive automation must not acquire a terminal or hang in curses.
     if [ ! -t 0 ] || [ ! -t 1 ]; then viewer=no; fi
@@ -46,6 +78,13 @@ launch() {
     if [ "$scheme" = body-frozen ]; then demo_mode="$demo_mode body-frozen"; fi
     (umask 077; printf '%s\n' "$demo_mode" > "$HOME/.config/quest-env/demo-mode.tmp")
     mv "$HOME/.config/quest-env/demo-mode.tmp" "$HOME/.config/quest-env/demo-mode"
+    # Robot AR view, read once at native initialization; a launch without --ar turns it off.
+    if [ -n "$ar_lines" ]; then
+        (umask 077; printf '%s' "$ar_lines" > "$HOME/.config/quest-env/robot-ar.tmp")
+        mv "$HOME/.config/quest-env/robot-ar.tmp" "$HOME/.config/quest-env/robot-ar"
+    else
+        rm -f "$HOME/.config/quest-env/robot-ar"
+    fi
     panel_request="$HOME/.config/quest-env/restore-terminal-once"
     rm -f "$panel_request"
     if [ "$viewer" = yes ]; then
@@ -130,6 +169,7 @@ case "${1:-help}" in
         echo "run/restart/builtin show the viewer in this terminal; --no-viewer skips it."
         echo "run -s --scheme=body-frozen: independent clutch frames; left stick click toggles smooth automove."
         echo "run -s enables the local kinematics demo; --base-frame=frozen freezes clutch base frames."
+        echo "run --ar=http://HOST[:PORT] shows the robot (description + robot_state stream) in AR; see ROBOT_AR.md."
         echo "pull updates files only; run loads the updated native library."
         ;;
 esac
