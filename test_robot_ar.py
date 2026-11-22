@@ -50,6 +50,20 @@ with tempfile.TemporaryDirectory(prefix='quest-robot-ar-') as tmp:
         ROOT / 'test_robot_ar.cpp', '-o', binary)
     run(binary)
 
+    # Without reset_seq (the real robot) the client exposes none, so A re-anchors.
+    server = Server(reset_seq=False)
+    out = subprocess.run([str(binary), '--client', server.url, '2'], capture_output=True, text=True, timeout=20)
+    server.stop()
+    assert out.returncode == 0 and 'model fake-' in out.stdout and 'reset_seq' not in out.stdout, out.stdout
+    print('PASS client without reset_seq', flush=True)
+
+    # Y is not wired to the AR placement; A reaches it (with input focus) only as the reset press.
+    source = (ROOT / 'native/telemetry.cpp').read_text()
+    call = source[source.index('arPlacement_.update('):]
+    call = call[:call.index(';')]
+    assert 'yButton' not in call and 'alignEdge && inputFocused' in call, call
+    print('PASS AR placement inputs: no Y; A only as the reset press', flush=True)
+
     for options in ({}, {'close_delimited': True}, {'objects_inline': True}):
         server = Server(**options)
         out = subprocess.run([str(binary), '--client', server.url, 'stats'], capture_output=True, text=True,
@@ -84,6 +98,9 @@ with tempfile.TemporaryDirectory(prefix='quest-robot-ar-') as tmp:
     def at(seconds):
         time.sleep(max(0, t0 + seconds - time.monotonic()))
     marks = {}
+    at(1.0)
+    server.get('/fake/reset')
+    marks['reset'] = time.monotonic()
     at(1.5)
     server.get('/fake/bump')
     marks['bump'] = time.monotonic()
@@ -111,6 +128,9 @@ with tempfile.TemporaryDirectory(prefix='quest-robot-ar-') as tmp:
                 return t, e
         raise AssertionError(f'no "{prefix}" after {after - t0:.1f}s: {log}')
     first('model fake-1', t0)
+    first('reset_seq 0', t0)
+    t, _ = first('reset_seq 1', marks['reset'])
+    assert t - marks['reset'] < 0.5, 'a reset_seq change reaches the snapshot within a few lines'
     t, _ = first('model fake-2', marks['bump'])
     assert t - marks['bump'] < 1.0, 'model_version change must refetch the description promptly'
     t, e = first('stale', marks['pause'])

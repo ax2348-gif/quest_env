@@ -400,7 +400,8 @@ reopening loop; it is not proof that such a loop occurred on the headset.
 Run `qp`, then `qr -s` for the immersive wireframe bimanual mobile manipulator.
 Each arm has 7 DOF; grips clutch independently, triggers close grippers, left
 stick translates and right stick X turns the swerve base. **A** realigns operator
-forward to headset yaw only when both grips are released; **Y** resets the demo.
+forward to headset yaw only when both grips are released (standard scheme only;
+body-frozen ignores it); **Y** resets the demo.
 Arms are 120% of their original size; the mast is rounded and moderately slimmer.
 `qr -s --base-frame=frozen` freezes robot-base frames at clutch engagement; the
 default tracks the live base. Plain `qr` disables the demo.
@@ -419,6 +420,7 @@ The initial usable version is tagged `initial-usable-teleop-v1`.
 
 `qr --ar=http://HOST[:PORT]` draws the robot from its description and
 `robot_state.v1` stream (the robot_utils simulator today) as a wireframe over
-passthrough, placed like the demo (Y re-places). It coexists with telemetry and
-either teleop scheme and does not change the telemetry records. See
+passthrough, placed like the demo at start. A sim reset (`reset_seq`) or, without
+one, A re-anchors it at the head's yaw; Y does nothing to it. It coexists with
+telemetry and either teleop scheme and does not change the telemetry records. See
 [ROBOT_AR.md](ROBOT_AR.md) for options, endpoint formats and validation.

@@ -1408,9 +1408,18 @@ private:
         if (demoEnabled_) robot_.update(operatorIntent_, dt,
             teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_,
             getBool(yButtonAction_), getBool(thumbstickClickAction_, leftHandPath_));
-        // Same placement convention and Y reset as the demo; reads input only.
-        if (arEnabled_) arPlacement_.update(operatorIntent_.session, operatorIntent_.operatorFromQuest,
-            teleop::operatorPose(DemoRenderer::pose(headPose_)).p, headTracked_, getBool(yButtonAction_));
+        // AR scene anchoring (robot_ar.h Placement): reads input only. Y is not used:
+        // a reset is a reset_seq change, or A when the state carries no reset_seq.
+        if (arEnabled_) {
+            const auto snap = arClient_.snapshot();
+            const bool hasSeq = snap.state && snap.state->hasResetSeq;
+            const int64_t seq = hasSeq ? snap.state->resetSeq : 0;
+            const bool inputFocused = sessionState_ == XR_SESSION_STATE_FOCUSED && actionSyncResult_ == XR_SUCCESS;
+            if (arPlacement_.update(operatorIntent_.session, operatorIntent_.operatorFromQuest,
+                    teleop::operatorPose(DemoRenderer::pose(headPose_)), headTracked_,
+                    hasSeq ? &seq : nullptr, alignEdge && inputFocused))
+                LOGI("Robot AR re-anchored at head yaw (%s)", hasSeq ? "reset_seq" : "A");
+        }
 
         // Historical logcat surface, opt-in via ~/.config/quest-env/legacy-logcat.
         if (legacyLogcat_) emitLegacyLogcat(leftActive, leftValid, leftLocation,

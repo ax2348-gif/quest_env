@@ -16,7 +16,7 @@ input. Use Meta to return input to XR. Release both grips once after startup.
 | Left / right index trigger | Continuously close that gripper |
 | Left stick | Forward/back and lateral base motion |
 | Right stick X | Base yaw |
-| A (both grips released) | Align operator forward to current headset facing, yaw only |
+| A (both grips released) | Standard scheme: align operator forward to current headset facing, yaw only. Body-frozen: no realignment |
 | Y | Reset the demo pose/placement; release and re-grip to resume |
 | B held 2 seconds | Existing telemetry shutdown behavior |
 | `qr -s --base-frame=frozen` | Keep clutched targets in the captured world frame while base moves |
@@ -84,7 +84,8 @@ head/controller poses, buttons and tracking fields. It now also contains:
 - `control_intent`: schema `teleop.operator_intent.v1`, session ID,
   `frame: operator_base_flu`, `translation_limit_m`, `base_velocity` and `hands`.
   `operator_from_quest` is the current 9-element row-major basis rotation and
-  `operator_frame_revision` increments on successful A realignment.
+  `operator_frame_revision` increments on successful A realignment (standard
+  scheme only; it stays 0 in body-frozen).
 - Each intent hand: `valid`, `engaged`, `needs_release`, `engagement_id`,
   `delta_position` (3 metres), `delta_rotation` (9 row-major matrix entries),
   and `gripper` (0 open–1 closed). Base velocity is robot-base forward/left m/s
@@ -160,9 +161,13 @@ position and gravity-aligned headset yaw) and an upright robot shoulder frame
 (current shoulder position and platform yaw). Headset yaw approximates torso
 heading: looking sideways at engagement changes that hand's command axes.
 These frames remain fixed in world space until that hand releases. No continuous
-head/body recentering happens. A still calibrates placement/reset heading only
-when both grips are released; new engagements in this scheme capture current
-head yaw regardless of that calibration.
+head/body recentering happens. **A does not realign in this scheme**: there is
+no `operator_from_quest` change and no `operator_frame_revision` bump, since
+each engagement already takes its frame from the head and a realignment would
+only add a discontinuity. A press neither cancels a clutch nor interrupts base
+motion. The demo's Y reset therefore uses the default forward (OpenXR LOCAL -Z)
+in this scheme. With `--ar`, A without a `reset_seq` in the robot state
+re-anchors the AR scene instead (see [ROBOT_AR.md](ROBOT_AR.md)).
 
 For each hand, transform the anchor and current controller into its captured
 operator frame. Use `dp = current.p - anchor.p` and spatial rotation

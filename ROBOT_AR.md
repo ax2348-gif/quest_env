@@ -5,7 +5,8 @@ robot later) as a wireframe over passthrough, live, so the operator can walk
 around during whole-body teleop tests without looking at a laptop. It runs
 alongside the telemetry stream and either teleop scheme. The telemetry records
 and `control_intent` are unchanged: the view only reads the head pose and the
-Y button.
+A button (as a reset press, see Placement). Y is not used by the view (on the
+robot it is the robot client's enable, X its disable).
 
 ```sh
 qp
@@ -48,13 +49,28 @@ robots are then placed at the same spot.
 
 ## Placement
 
-The sim world origin and +x take the kinematic demo's placement: 1.6 m along
-the calibrated operator forward from the first tracked head position, 1.6 m
-below it (a hypothetical floor, not detected ground). **Y** re-places it at the
-current head position and calibrated heading. **A** realignment changes the
-control mapping only; it does not move the scene (press Y afterwards to re-place
-with the new forward). A LOCAL reference-space change re-places it.
-Sim world: z up, metres. Operator space: the demo's FLU frame of OpenXR LOCAL.
+The sim world origin sits 1.6 m ahead of the head along a heading and 1.6 m
+below the head (a hypothetical floor, not detected ground); the sim's +x is that
+heading. Sim world: z up, metres. Operator space: the demo's FLU frame of
+OpenXR LOCAL.
+
+- **First tracked head** and **LOCAL reference-space change**: placed as the
+  kinematic demo is, heading = the calibrated operator forward (OpenXR LOCAL -Z
+  at those moments, since a new provider session resets the calibration).
+- **Reset** re-anchors the scene at the current head, heading = the head's
+  gravity-aligned yaw at that moment (not the operator forward and not A's
+  realignment; looking straight down or up, the headset's up/down vector
+  gives the facing). A reset is:
+  - a change of `reset_seq` in the state lines (the sim's reset). The first
+    value seen is only a baseline; a missing or unchanged `reset_seq` never
+    re-anchors. A change seen while the head is untracked is applied once
+    tracking returns.
+  - an **A** press (rising edge, XR input focused, head tracked) when the state
+    lines carry no `reset_seq` (the real robot: there A only re-anchors the AR
+    scene). With `reset_seq` present, A does nothing here.
+- **Y** does nothing to the scene. In the standard scheme A also realigns the
+  operator forward (unchanged); in body-frozen it does not (see DEMO.md).
+- Logcat: `Robot AR re-anchored at head yaw (reset_seq|A)`.
 
 ## Status and robustness
 
@@ -101,7 +117,7 @@ Description (`GET .../model/tree?variant=simple`):
 State line (`robot_state.v1`):
 
 ```json
-{"t": 12.3, "seq": 369, "model_version": "a1b2", "base": [x, y, z, qx, qy, qz, qw],
+{"t": 12.3, "seq": 369, "model_version": "a1b2", "reset_seq": 2, "base": [x, y, z, qx, qy, qz, qw],
  "joints": {"arm_joint1": 0.4, "module_0_steer": 0.1},
  "overlays": {"wbc": {"left_target": {"pose": [7 numbers], "limited": false},
                       "left_command": [7 numbers], "limited": true, "reason": "joint limit",
@@ -128,8 +144,9 @@ python3 tools/fake_robot_server.py --port 8765 --objects-inline   # a stand-in r
 
 `tools/fake_robot_server.py` serves a swerve base driving a slow circle, two
 waving arms with mimic fingers, EE target/command overlays, a base hint and a
-`limited` flag toggling every 5 s, plus `/fake/bump` (new `model_version`),
-`/fake/pause` and `/fake/resume`. `test_native_demo.py` renders the robot from
+`limited` flag toggling every 5 s and a `reset_seq`, plus `/fake/bump` (new
+`model_version`), `/fake/reset` (`reset_seq` + 1), `/fake/pause` and
+`/fake/resume`; `--no-reset-seq` omits `reset_seq` like the real robot. `test_native_demo.py` renders the robot from
 it through the real renderer: `/tmp/quest-ar-eye-{1,2}.ppm`, and dimmed
 `/tmp/quest-ar-stale-eye-{1,2}.ppm`.
 

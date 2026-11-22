@@ -6,6 +6,7 @@ Serves, like the robot frontend (paths under /nodes/<node>):
   GET /nodes/sim/robot_state/stream?format=jsonl&hz=30       robot_state.v1 lines (chunked)
   GET /nodes/sim/objects/stream?format=jsonl&hz=10           {"objects": {...}} lines
   GET /fake/bump                                             new model_version (taller mast)
+  GET /fake/reset                                            reset_seq + 1 (the sim's reset: AR re-anchors)
 
 A swerve base drives a slow circle; two 4-joint arms with mimic fingers wave;
 overlays carry EE targets/commands, a base velocity hint and a `limited` flag
@@ -22,7 +23,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-STATE = {"version": 1}
+STATE = {"version": 1, "reset_seq": 0}
 LOCK = threading.Lock()
 
 
@@ -103,7 +104,7 @@ def objects(t):
                      "geom": {"type": "box", "size": [0.05, 0.05, 0.05], "rgba": [1, 0.3, 0.3, 1]}}}
 
 
-def state(seq, t, objects_inline):
+def state(seq, t, objects_inline, reset_seq=True):
     radius, period = 0.5, 20.0
     w = 2 * math.pi / period
     yaw = w * t  # Starts at the origin facing +x, circling left.
@@ -134,6 +135,8 @@ def state(seq, t, objects_inline):
                                  "right_command": ahead(0.5, -0.28, 0.98),
                                  "limited": limited, "reason": "joint limit" if limited else "",
                                  "base_mode": "follow", "base_hint": [radius * w, 0.0, w]}}}
+    if reset_seq:  # The sim's reset counter; the real robot sends none (--no-reset-seq).
+        line["reset_seq"] = STATE["reset_seq"]
     if objects_inline:
         line["objects"] = objects(t)
     return line
@@ -197,9 +200,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.model_requests += 1
                 return self.send_json(model())
         if url.path == "/nodes/sim/robot_state/stream":
-            return self.stream(lambda seq, t: state(seq, t, self.server.objects_inline), hz)
+            return self.stream(lambda seq, t: state(seq, t, self.server.objects_inline, self.server.reset_seq), hz)
         if url.path == "/nodes/sim/objects/stream":
             return self.stream(lambda seq, t: {"t": t, "seq": seq, "objects": objects(t)}, hz)
+        if url.path == "/fake/reset":
+            with LOCK:
+                STATE["reset_seq"] += 1
+                return self.send_json({"reset_seq": STATE["reset_seq"]})
         if url.path == "/fake/bump":
             with LOCK:
                 STATE["version"] += 1
@@ -215,12 +222,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
-def serve(port=0, close_delimited=False, objects_inline=False, max_lines=0, verbose=False, host="127.0.0.1"):
+def serve(port=0, close_delimited=False, objects_inline=False, max_lines=0, verbose=False, host="127.0.0.1",
+          reset_seq=True):
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.close_delimited, server.objects_inline = close_delimited, objects_inline
     server.max_lines, server.verbose, server.stopping = max_lines, verbose, False
     server.paused, server.model_requests = threading.Event(), 0
+    server.reset_seq = reset_seq
     return server
 
 
@@ -230,10 +239,11 @@ def main():
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--close-delimited", action="store_true", help="no chunked encoding; end body at close")
     p.add_argument("--objects-inline", action="store_true", help="put objects in the state lines")
+    p.add_argument("--no-reset-seq", action="store_true", help="omit reset_seq, like the real robot (A re-anchors)")
     p.add_argument("--max-lines", type=int, default=0, help="end each stream after N lines (0 = never)")
     p.add_argument("--verbose", action="store_true")
     a = p.parse_args()
-    server = serve(a.port, a.close_delimited, a.objects_inline, a.max_lines, a.verbose, a.host)
+    server = serve(a.port, a.close_delimited, a.objects_inline, a.max_lines, a.verbose, a.host, not a.no_reset_seq)
     print(f"PORT {server.server_address[1]}", flush=True)
     try:
         server.serve_forever()

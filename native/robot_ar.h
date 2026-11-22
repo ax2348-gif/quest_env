@@ -539,6 +539,8 @@ struct State {
     double t = 0;
     int64_t seq = -1;
     std::string modelVersion;
+    bool hasResetSeq = false; // reset_seq: a change re-anchors the AR scene.
+    int64_t resetSeq = 0;
     Pose base;
     bool hasBase = false;
     std::map<std::string, double> joints;
@@ -651,6 +653,11 @@ inline bool parseState(const Json &j, State &out) {
     s.seq = int64_t(num(j.get("seq"), -1));
     if (const Json *v = j.get("model_version"))
         s.modelVersion = v->isStr() ? v->s : v->isNum() ? std::to_string(int64_t(v->n)) : "";
+    if (const Json *r = j.get("reset_seq"))
+        if (r->isNum() && std::isfinite(r->n)) {
+            s.hasResetSeq = true;
+            s.resetSeq = int64_t(r->n);
+        }
     s.hasBase = parsePose(j.get("base"), s.base);
     if (const Json *q = j.get("joints"))
         if (q->isObj())
@@ -692,37 +699,67 @@ inline std::map<std::string, Pose> forwardKinematics(const Model &m, const State
 }
 
 // ----------------------------------------------------------- placement ------
-// The demo's convention (teleop::Robot::reset): the sim world origin sits 1.6 m
-// along the calibrated operator forward from the head, 1.6 m below the head,
-// heading = operator forward. Placed at the first tracked head, re-placed by Y
-// and by a provider-session change. A realignment does not move it. An optional
-// offset (metres, in the placed frame), yaw (rad about up) and uniform scale
-// apply on top.
+// Where the sim world sits in the operator space. The origin is 1.6 m ahead of
+// the head along a heading and 1.6 m below it (a hypothetical floor); +x is the
+// heading. Offset (metres, in the placed frame), yaw (rad about up) and uniform
+// scale from the config apply on top.
+//  - First tracked head and provider-session (LOCAL reference-space) change:
+//    placed as the demo does, heading = calibrated operator forward.
+//  - Reset: re-anchored at the head with heading = the head's gravity-aligned
+//    yaw at that moment. A reset is a change of the state's reset_seq (the
+//    first value seen is only a baseline), or, when the state carries no
+//    reset_seq, an A press (focused, head tracked). Y does nothing here.
 struct Placement {
-    bool placed = false, resetDown = false;
+    bool placed = false;
     int64_t session = 0;
     Pose origin;
     V offset;
     double yaw = 0, scale = 1;
+    bool seqSeen = false, pending = false;
+    int64_t lastSeq = 0;
     void reset(V head, const M &heading) {
         origin = {head + heading * V{1.6, 0, 0} + V{0, 0, -1.6}, heading};
         placed = true;
     }
-    // Same heading the demo uses: operator forward expressed in LOCAL-FLU.
+    // The demo's heading: calibrated operator forward expressed in LOCAL-FLU.
     static M heading(const M &operatorFromQuest) {
         return teleop::questToBase() * teleop::transpose(operatorFromQuest);
     }
-    void update(int64_t providerSession, const M &operatorFromQuest, V head, bool headValid, bool resetButton) {
+    // Gravity-aligned yaw of the headset (head pose in LOCAL-FLU). Looking straight
+    // down or up, the headset's up (or down) vector gives the facing instead.
+    static M headYaw(const Pose &head) {
+        // operatorPose keeps the headset's body axes: view = its -Z, up = its +Y.
+        V f = head.r * V{0, 0, -1};
+        if (std::hypot(f.x, f.y) < .15)
+            f = head.r * V{0, 1, 0} * (f.z < 0 ? 1. : -1.);
+        return teleop::rotation({0, 0, 1}, std::atan2(f.y, f.x));
+    }
+    // headFlu: head pose in LOCAL-FLU (teleop::operatorPose of the OpenXR pose).
+    // resetSeq: the newest state's reset_seq, null when absent or no state yet.
+    // aPress: A rising edge while input is focused. True when it re-anchored.
+    bool update(int64_t providerSession, const M &operatorFromQuest, const Pose &headFlu, bool headValid,
+                const int64_t *resetSeq, bool aPress) {
         if (!placed || session != providerSession) {
             placed = false;
             if (headValid)
-                reset(head, heading(operatorFromQuest));
+                reset(headFlu.p, heading(operatorFromQuest));
             session = providerSession;
         }
-        bool edge = resetButton && !resetDown;
-        resetDown = resetButton;
-        if (edge && headValid)
-            reset(head, heading(operatorFromQuest));
+        if (resetSeq) {
+            if (!seqSeen) {
+                seqSeen = true;
+                lastSeq = *resetSeq;
+            } else if (*resetSeq != lastSeq) {
+                lastSeq = *resetSeq;
+                pending = true; // Applied as soon as the head is tracked.
+            }
+        } else if (aPress && headValid)
+            pending = true;
+        if (!pending || !headValid)
+            return false;
+        pending = false;
+        reset(headFlu.p, headYaw(headFlu));
+        return true;
     }
     Pose world() const { return teleop::compose(origin, {offset, teleop::rotation({0, 0, 1}, yaw)}); }
     // Sim-world pose -> operator FLU (position scaled about the placed origin).
