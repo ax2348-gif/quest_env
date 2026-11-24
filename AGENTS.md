@@ -11,10 +11,11 @@ computer reads that stream. The consumer is [robot_utils](https://github.com/ax2
 - **Location:** `~/workspace/quest_env` (`$HOME` is the runtime's private home). `~/.config/quest-env/root` names
   it; `shell/install-profile.sh` writes it, together with a `q` shortcut for interactive shells.
 - **How it arrives:**
-  - **Collaborators:** robot_utils' setup wizard (`tools/quest_teleop/quest_setup.py`) **copies** the tag
-    `collab-v1` there. There is no Git clone: `quest pull` doesn't apply, and updating means rerunning the wizard
-    after its pin changes. A `.robot_utils_ref` file records the copied version.
-  - **The maintainer's headset** has a Git clone instead (HTTPS remote). `quest pull` fast-forwards it.
+  - **robot_utils' setup wizard** (`tools/quest_teleop/quest_setup.py`) copies the tag `collab-v2` there, runs
+    `sh quest install-devtools` (git, curl, wget from `packages/devtools`), then makes it a Git clone (HTTPS
+    remote) tracking branch `collab` (the maintainer's: `main`, via `--quest-env-branch`). `quest pull`
+    fast-forwards it, and robot_utils' quest_up does that when the clone is behind.
+  - **Without git** (`sh: git: not found`): rerun the wizard, or `sh quest install-devtools`.
 - **The `quest` script** (`sh quest <cmd>` on the headset; robot_utils runs it over `ssh quest`):
   - `run [--no-viewer] [--scheme=body-frozen|standard] [-s] [--ar=URL]` starts the native telemetry; `--ar` adds
     the robot AR view (ROBOT_AR.md);
