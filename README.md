@@ -5,6 +5,33 @@ artifacts to the clone in the Quest runtime's workspace. The installed
 `quest-dev-runtime` APK supplies SSH, terminals, the native activity, and OpenXR
 loader. Routine native changes do not require rebuilding or installing that APK.
 
+## Setting up a headset
+
+The easy way is robot_utils' setup wizard. Plug the headset in over USB and run
+`python3 tools/quest_teleop/quest_setup.py` from a robot_utils checkout:
+[robot_utils docs/quest_setup.md](https://github.com/ax2348-gif/robot_utils/blob/collab/docs/quest_setup.md). It does
+the following, and is safe to rerun:
+- installs Tailscale and the Quest developer runtime;
+- authorises an SSH key and adds `Host quest` to `~/.ssh/config`;
+- copies this repository (tag `collab-v1`) to `~/workspace/quest_env` and installs its profile.
+
+By hand, on a headset whose runtime already answers `ssh quest`
+([quest_dev SETUP.md](https://github.com/ax2348-gif/quest_dev/blob/collab/SETUP.md)) and has Git (DEVTOOLS.txt in
+quest_dev):
+
+```sh
+cd ~/workspace
+git clone https://github.com/ax2348-gif/quest_env.git   # HTTPS only: the runtime has no outbound SSH
+cd quest_env
+sh shell/install-profile.sh   # the q shortcut and ~/.config/quest-env/root (also an `erid` alias, unused by others)
+sh quest run                  # then `sh quest status`: XR FOCUSED, controllers tracked
+```
+
+The stream flows only while the XR session is focused: the headset is awake, worn, not privacy-locked, and
+nothing else is in front. robot_utils' **Quest up** does `pull` / `run` / the wait for the stream over `ssh quest`.
+`sh quest stop`, or holding right B for two seconds while focused, stops the telemetry. [AGENTS.md](AGENTS.md)
+gives coding agents the context for debugging.
+
 ## First build on erid
 
 ```bash
