@@ -1622,6 +1622,7 @@ private:
             appendJsonBool(json, battery_.plugged);
             json << ",\"temperature_c\":" << jsonFixed(battery_.temperature_c, 1) << "}";
         }
+        if (arEnabled_) appendRobotArJson(json, time);   // additive: older consumers ignore it
         json << ",\"head\":{";
         json << "\"position_valid\":";
         appendJsonBool(json, (headLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0);
@@ -1742,6 +1743,38 @@ private:
            << ((locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) != 0 ? 1 : 0)
            << ',' << prefix << "OrientationTracked "
            << ((locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) != 0 ? 1 : 0);
+    }
+
+    // The AR view's placement (robot_ar::placementJson: the sim world in LOCAL, scale, the floor it used, each
+    // re-anchoring) and the two eyes (pose in VIEW, i.e. relative to the record's head pose, and field of view, rad),
+    // so a recording can be re-rendered from the operator's eyes (ROBOT_AR.md, "Logged placement").
+    void appendRobotArJson(std::ostringstream& json, XrTime time) {
+        std::string pl = robot_ar::placementJson(arPlacement_, floorSpaceName_);
+        pl.pop_back();   // the closing brace: the views go inside the same block
+        json << ",\"robot_ar\":" << pl << ",\"views\":";
+        XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
+        locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        locate.displayTime = time;
+        locate.space = viewSpace_;
+        XrViewState state{XR_TYPE_VIEW_STATE};
+        XrView views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        uint32_t count = 0;
+        if (viewSpace_ == XR_NULL_HANDLE ||
+            XR_FAILED(xrLocateViews(session_, &locate, &state, 2, &count, views)) || count != 2) {
+            json << "null}";
+            return;
+        }
+        json << '[';
+        for (int i = 0; i < 2; ++i) {
+            if (i) json << ',';
+            const auto& f = views[i].fov;
+            json << "{\"eye\":\"" << (i == 0 ? "left" : "right") << "\",\"fov\":[" << jsonFixed(f.angleLeft) << ','
+                 << jsonFixed(f.angleRight) << ',' << jsonFixed(f.angleUp) << ',' << jsonFixed(f.angleDown)
+                 << "],\"pose\":";
+            appendMatrixJson(json, views[i].pose);
+            json << '}';
+        }
+        json << "]}";
     }
 
     void appendControllerJson(
