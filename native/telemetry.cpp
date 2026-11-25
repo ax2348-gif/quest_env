@@ -642,6 +642,7 @@ void restoreTerminalTask(android_app* app) {
 
 #include "status_panel.h"
 #include "demo_renderer.h"
+#include "scene_view.h"
 
 class QuestTelemetryApp {
 public:
@@ -704,9 +705,16 @@ public:
             return false;
         }
         if (arEnabled_) {
-            LOGI("Robot AR view: model %s state %s objects %s", arConfig_.modelUrl.c_str(),
-                 arConfig_.stateUrl.c_str(), arConfig_.objectsUrl.empty() ? "(in state)" : arConfig_.objectsUrl.c_str());
+            LOGI("Robot AR view: model %s state %s objects %s scene %s", arConfig_.modelUrl.c_str(),
+                 arConfig_.stateUrl.c_str(), arConfig_.objectsUrl.empty() ? "(in state)" : arConfig_.objectsUrl.c_str(),
+                 arConfig_.sceneUrl.empty() ? "(off)" : arConfig_.sceneUrl.c_str());
             arClient_.start(arConfig_);
+            if (!arConfig_.sceneUrl.empty()) {
+                if (sceneView_.init())
+                    sceneClient_.start(arConfig_.sceneUrl);
+                else
+                    LOGE("Rigid scene renderer initialization failed; description view only");
+            }
         }
         LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
         LOGI("Legacy %s logcat controller line %s", kControllerLogTag,
@@ -719,6 +727,8 @@ public:
 
     void shutdown() {
         arClient_.stop();
+        sceneClient_.stop();
+        sceneView_.shutdown();
         controllerServer_.shutdown();
         demoRenderer_.shutdown();
         panel_.shutdown();
@@ -940,10 +950,46 @@ private:
             LOGW("Robot AR description: %s (%s)", snap.modelNote.c_str(), snap.modelUrl.c_str());
             arLoggedNote_ = snap.modelNote;
         }
+        // The rigid scene (meshes, ghosts) when the server has one: the description and objects are then not drawn.
+        const auto scene = sceneClient_.snapshot();
+        // The server's view anchor: that sim-world point goes where the world origin would (in front of the
+        // operator), on top of --ar-offset / --ar-yaw. Applied live; it moves the whole scene.
+        {
+            double yaw = arConfig_.yawDeg * teleop::pi / 180;
+            teleop::V off = arConfig_.offset;
+            if (scene.scene && scene.view.hasAnchor) {
+                yaw += scene.view.anchor[2] * teleop::pi / 180;
+                teleop::V a{scene.view.anchor[0], scene.view.anchor[1], 0};
+                off = off - teleop::rotation({0, 0, 1}, yaw) * (a * arPlacement_.scale);
+            }
+            arPlacement_.offset = off;
+            arPlacement_.yaw = yaw;
+        }
+        const bool sceneStale = scene.frameRxNs && double(now - scene.frameRxNs) * 1e-9 > robot_ar::kStaleAfterS;
+        sceneActive_ = render && !arConfig_.sceneUrl.empty() && sceneView_.update(scene, arPlacement_, sceneStale);
+        if (sceneActive_)
+            demoRenderer_.meshDraw = [this](const float *vp) {
+                mesh_scene::Mat4 m;
+                std::memcpy(m.m, vp, sizeof m.m);
+                sceneView_.draw(m);
+            };
+        else
+            demoRenderer_.meshDraw = nullptr;
+        if (scene.sceneVersion != sceneLoggedVersion_ || scene.error != sceneLoggedError_) {
+            LOGI("Robot AR scene: version %ld %s%s", scene.sceneVersion, scene.error.empty() ? "ok" : "",
+                 scene.error.c_str());
+            sceneLoggedVersion_ = scene.sceneVersion;
+            sceneLoggedError_ = scene.error;
+        }
+        if (sceneActive_)
+            panel_.arLines.push_back("SCENE " + scene.view.style + " " + std::to_string(sceneView_.triangles() / 1000) +
+                                     "K TRIS");
+        else if (!arConfig_.sceneUrl.empty() && !scene.unavailable && !scene.error.empty())
+            panel_.arLines.push_back(scene.error);
         arWire_.clear();
         if (render)
             robot_ar::buildScene(arWire_, snap.model.get(), snap.state.get(), arPlacement_,
-                                 robot_ar::isStale(snap, now), snap.objects.get());
+                                 robot_ar::isStale(snap, now), snap.objects.get(), sceneActive_);
     }
 
     android_app* app_ = nullptr;
@@ -960,6 +1006,11 @@ private:
     robot_ar::Client arClient_;
     robot_ar::Placement arPlacement_;
     teleop::Wire arWire_;
+    scene_client::Client sceneClient_;
+    SceneView sceneView_;
+    bool sceneActive_ = false;
+    long sceneLoggedVersion_ = 0;
+    std::string sceneLoggedError_;
     bool arEnabled_ = false, arLoggedConnected_ = false;
     std::string arLoggedError_, arLoggedNote_;
     bool legacyLogcat_ = false;
@@ -1584,6 +1635,7 @@ private:
             appendJsonBool(json, battery_.plugged);
             json << ",\"temperature_c\":" << jsonFixed(battery_.temperature_c, 1) << "}";
         }
+        if (arEnabled_) appendRobotArJson(json, time);   // additive: older consumers ignore it
         json << ",\"head\":{";
         json << "\"position_valid\":";
         appendJsonBool(json, (headLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0);
@@ -1704,6 +1756,38 @@ private:
            << ((locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) != 0 ? 1 : 0)
            << ',' << prefix << "OrientationTracked "
            << ((locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) != 0 ? 1 : 0);
+    }
+
+    // The AR view's placement (robot_ar::placementJson: the sim world in LOCAL, scale, the floor it used, each
+    // re-anchoring) and the two eyes (pose in VIEW, i.e. relative to the record's head pose, and field of view, rad),
+    // so a recording can be re-rendered from the operator's eyes (ROBOT_AR.md, "Logged placement").
+    void appendRobotArJson(std::ostringstream& json, XrTime time) {
+        std::string pl = robot_ar::placementJson(arPlacement_, floorSpaceName_);
+        pl.pop_back();   // the closing brace: the views go inside the same block
+        json << ",\"robot_ar\":" << pl << ",\"views\":";
+        XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
+        locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        locate.displayTime = time;
+        locate.space = viewSpace_;
+        XrViewState state{XR_TYPE_VIEW_STATE};
+        XrView views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        uint32_t count = 0;
+        if (viewSpace_ == XR_NULL_HANDLE ||
+            XR_FAILED(xrLocateViews(session_, &locate, &state, 2, &count, views)) || count != 2) {
+            json << "null}";
+            return;
+        }
+        json << '[';
+        for (int i = 0; i < 2; ++i) {
+            if (i) json << ',';
+            const auto& f = views[i].fov;
+            json << "{\"eye\":\"" << (i == 0 ? "left" : "right") << "\",\"fov\":[" << jsonFixed(f.angleLeft) << ','
+                 << jsonFixed(f.angleRight) << ',' << jsonFixed(f.angleUp) << ',' << jsonFixed(f.angleDown)
+                 << "],\"pose\":";
+            appendMatrixJson(json, views[i].pose);
+            json << '}';
+        }
+        json << "]}";
     }
 
     void appendControllerJson(

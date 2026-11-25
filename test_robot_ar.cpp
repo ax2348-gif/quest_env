@@ -243,6 +243,41 @@ static void testPlacement() {
     assert(near(Placement::headYaw(fluHead({}, down)), rotation({0, 0, 1}, pi / 2), 1e-9));
     M up = rotation({0, 1, 0}, pi / 2) * rotation({1, 0, 0}, pi / 2);
     assert(near(Placement::headYaw(fluHead({}, up)), rotation({0, 0, 1}, pi / 2), 1e-9));
+    // The logged placement (telemetry's "robot_ar" block): reasons, counts, the reset_seq it stands for, and a
+    // sim_in_local that maps sim points exactly as scene_view.h draws them (questToBase^T * world, scaled).
+    {
+        Placement lp;
+        lp.offset = {.1, -.2, .05};
+        lp.yaw = .3;
+        lp.scale = .5;
+        double floor = -1.1;
+        assert(!lp.update(3, head, true, nullptr, false, &floor) && lp.placements == 1 && lp.reason == "first");
+        int64_t s5 = 5, s6 = 6;
+        assert(!lp.update(3, head, true, &s5, false, &floor) && lp.placedSeqValid && lp.placedSeq == 5);
+        assert(!lp.update(3, ahead, false, &s6, false, &floor) && lp.pending && lp.placements == 1);
+        assert(lp.update(3, ahead, true, nullptr, false, &floor) && lp.reason == "reset_seq" && lp.placedSeq == 6);
+        assert(lp.update(4, head, true, &s6, false, nullptr) == false && lp.reason == "session" &&
+               lp.placements == 3 && lp.floorEstimated);
+        Json j = parse(placementJson(lp, "LOCAL_FLOOR"));
+        assert(j.get("placed")->b && near(j.get("placements")->n, 3) && j.get("reason")->s == "session");
+        assert(near(j.get("reset_seq")->n, 6) && near(j.get("placed_reset_seq")->n, 6));
+        assert(j.get("floor")->s == "estimated" && near(j.get("scale")->n, .5) && near(j.get("yaw")->n, .3));
+        lp.update(4, head, true, &s6, true, &floor); // A is ignored with reset_seq
+        assert(lp.placements == 3);
+        Pose w = lp.world();
+        V xs{.4, -.3, .9};
+        V flu = w.p + w.r * (xs * lp.scale);
+        V local = teleop::transpose(teleop::questToBase()) * flu;
+        const Json *m = j.get("sim_in_local");
+        assert(m && m->a.size() == 16);
+        V got{m->a[0].n * xs.x * .5 + m->a[1].n * xs.y * .5 + m->a[2].n * xs.z * .5 + m->a[3].n,
+              m->a[4].n * xs.x * .5 + m->a[5].n * xs.y * .5 + m->a[6].n * xs.z * .5 + m->a[7].n,
+              m->a[8].n * xs.x * .5 + m->a[9].n * xs.y * .5 + m->a[10].n * xs.z * .5 + m->a[11].n};
+        assert(near(got, local, 1e-5));
+        Placement none;
+        Json n = parse(placementJson(none, "STAGE"));
+        assert(!n.get("placed")->b && n.get("floor")->s == "none" && n.get("reset_seq")->type == Json::Null);
+    }
     // reset_seq is parsed when present, absent otherwise.
     State st;
     assert(parseState(parse(R"({"base": [0,0,0,0,0,0,1], "reset_seq": 3})"), st) && st.hasResetSeq &&

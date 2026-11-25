@@ -1,0 +1,25 @@
+{
+  "name": "Render bench",
+  "host_abi": 1,
+  "architecture": "android-arm64",
+  "minimum_api": 28,
+  "openxr_loader": "1.1.53",
+  "library_sha256": "1574d3371502cb4a5c1f0770e930ba123529c3341725c76beff814f6d65287ba",
+  "sources": {
+    "native/demo_renderer.h": "5fa996e9fc0181d56bf92a28005353ddf9c8d8ab5898b78d4b834b8dba7a72a7",
+    "native/identity.c": "7254e24ef193afeb24a7a79255c9fc775aaa95b1090573efc0e6d19808ae175c",
+    "native/mesh_renderer.h": "3dd5e82c0b2b462224a1257d720043ac0c8790ef4e48669bc737d780d86a9222",
+    "native/mesh_scene.h": "b25e8b36c7fdeb278ffbc8df9995bf05ec2980b1d1e76c127903abe4ae36b1d1",
+    "native/quest_native_app.h": "7178c1635f1a62b4229510b2dbaa58ae53cf43ccaa5eb516236100e3e724d6d3",
+    "native/render_bench.cpp": "4cd1471ca2772b27c1c60ebc1f5172e39ccdf3f7f5346d69f3558e4d732a9f6d",
+    "native/robot_ar.h": "b899a820bc8705822f545504beaded46cd4ccc78a287e8bf06c51e42c01288b4",
+    "native/robot_ar_client.h": "c6aa3ac3e2f22873c259b45474186e4589e97233db916e7f50b3576db9ad785f",
+    "native/status_panel.h": "768970685be0e581374e5502c5139fc36ee27915737ee97309f9d8289f725836",
+    "native/telemetry.cpp": "af40f5f07b2caea483ee246e13db4f75533c37c2ea0c8be3c1e53915a9702111",
+    "native/teleop_core.h": "87306e2aae97781d99d7d09c7e084bf50bb4e1a86110a3cbb592c57c4c8c18e3",
+    "native/wireframe.h": "aec706640ac85a9d1a46baf6b93dde4835235ef04feb31057921367339a47611",
+    "tools/compile_native.py": "c9030f69a89d0e9f6003ca4986dfac054b4c7763b05145c9197ff408d59280a3",
+    "tools/deliver.py": "38f249c518ad6e117e0a13c56b0b7ee7305b39cb65aab1e99bd803b0ea72e4d4"
+  },
+  "ndk": "Pkg.Desc = Android NDK\nPkg.Revision = 27.2.12479018\nPkg.BaseRevision = 27.2.12479018\nPkg.ReleaseName = r27c\n"
+}

@@ -19,7 +19,7 @@ launch() {
     ar_lines=""
     for option in "$@"; do
         case "$option" in
-            --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
+            --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-scene=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
                 value="${option#*=}"
                 case "$value" in
                     # One config line per option: no empty values, blanks or newlines.
@@ -31,6 +31,7 @@ launch() {
                     --ar-model) key=model ;;
                     --ar-state) key=state ;;
                     --ar-objects) key=objects ;;
+                    --ar-scene) key=scene ;;
                     --ar-offset) key=offset ;;
                     --ar-yaw) key=yaw ;;
                     --ar-scale) key=scale ;;
@@ -38,6 +39,8 @@ launch() {
                 case "$key" in
                     url|model|state|objects)
                         case "$value" in http://*) ;; *) echo "$option needs an http:// URL" >&2; exit 2 ;; esac ;;
+                    scene)
+                        case "$value" in http://*|off) ;; *) echo "$option needs an http:// URL or off" >&2; exit 2 ;; esac ;;
                 esac
                 ar_lines="$ar_lines$key=$value
 " ;;
@@ -154,6 +157,12 @@ case "${1:-help}" in
         shift
         launch "$operation" "$@"
         ;;
+    bench)
+        # The render benchmark (native/render_bench.cpp): ~2.5 min of meshes ahead of you, then it exits.
+        verify render_bench
+        echo "Render bench: look straight ahead until it exits; results in ~/render_bench/ (and logcat QuestRenderBench)."
+        exec quest-native run "$ROOT/packages/render_bench/libapp.so"
+        ;;
     status) exec quest-native status ;;
     stop)
         rm -f "$HOME/.config/quest-env/restore-terminal-once"
@@ -165,7 +174,7 @@ case "${1:-help}" in
             "$ROOT/packages/devtools/tools.tar.gz" "${expected%% *}"
         ;;
     *)
-        echo "Usage: sh quest {pull|watch [--host HOST --port PORT]|verify [telemetry|devtools]|run|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
+        echo "Usage: sh quest {pull|watch [--host HOST --port PORT]|verify [telemetry|devtools|render_bench]|run|bench|status|stop|restart|builtin|install-devtools|install-profile|erid-key}"
         echo "run/restart/builtin show the viewer in this terminal; --no-viewer skips it."
         echo "run -s --scheme=body-frozen: independent clutch frames; left stick click toggles smooth automove."
         echo "run -s enables the local kinematics demo; --base-frame=frozen freezes clutch base frames."

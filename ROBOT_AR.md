@@ -87,6 +87,33 @@ The scene is placed:
 operator forward (unchanged); in body-frozen it does not (see DEMO.md).
 Logcat: `Robot AR re-anchored at head yaw (reset_seq|A)`.
 
+## Logged placement
+
+While the AR view is on, every telemetry record (`teleop.quest_state.v1`) carries a `robot_ar` block with the
+placement in force for that frame and the two eyes, so a recording can be re-rendered from the operator's view
+(robot_utils `python -m robot_utils.replay`, docs/collect.md "Operator view replay"). Additive: consumers that
+do not know it ignore it. Matrices are 16 row-major numbers (translation in elements 3, 7, 11), as the record's
+`head.pose` and `hands.*.pose`.
+
+| field | |
+|---|---|
+| `placed` | the scene is placed (false before the first tracked head, and after a LOCAL reference-space change until the head is tracked again) |
+| `placements` | placements so far: a change between two records is a re-anchoring at that record |
+| `reason` | why the last one: `first` (first tracked head), `session` (LOCAL reference-space change), `reset_seq` (the sim's reset), `A` (A press, no `reset_seq` in the state) |
+| `reset_seq` | the newest `reset_seq` seen in the state lines (null: none yet / the real robot) |
+| `placed_reset_seq` | the `reset_seq` the current placement stands for (the first value seen is the baseline of the first placement) |
+| `reset_pending` | a `reset_seq` change seen while the head was untracked, applied at the next tracked head |
+| `floor` | the floor height source of the last placement: `LOCAL_FLOOR`, `STAGE`, `estimated` (head − 1.6 m) or `none` (not placed yet) |
+| `floor_z` | that floor height, LOCAL-FLU z (LOCAL +Y), m |
+| `offset`, `yaw`, `scale` | `--ar-offset` (m, in the placed frame), `--ar-yaw` (rad), `--ar-scale` |
+| `origin_flu` | the placed origin in LOCAL-FLU (1.6 m ahead of the head along its yaw, at `floor_z`), before offset / yaw |
+| `sim_in_local` | the sim world in OpenXR LOCAL without the scale: a sim point `x` is drawn at `R (scale · x) + p` in LOCAL. It is `questToBase()ᵀ · world()`, the chain `scene_view.h` draws with |
+| `views` | `[{eye: left\|right, fov: [left, right, up, down] (rad, OpenXR XrFovf), pose (the eye in VIEW space, i.e. relative to `head.pose`)}]`, located at the record's sample time; null when the runtime gave none |
+
+So the left eye's camera in LOCAL is `head.pose · views[0].pose`, and the sim world maps into LOCAL by
+`sim_in_local` and `scale`: everything a renderer needs, with no reconstruction from the head. The head pose of the
+record is OpenXR VIEW located in LOCAL; the controllers are the grip spaces in LOCAL.
+
 ## Status and robustness
 
 A HUD line under the demo text shows `ROBOT AR OK <rate> HZ <age> MS`,

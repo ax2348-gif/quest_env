@@ -11,6 +11,8 @@
 // Sim world: z up, metres. Operator space: FLU of OpenXR LOCAL (teleop_core.h).
 #include "wireframe.h"
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -719,12 +721,26 @@ struct Placement {
     bool seqSeen = false, pending = false;
     int64_t lastSeq = 0;
     bool floorEstimated = false; // The last placement used head - 1.6 m (no floor space).
+    // The last placement, for the telemetry log (placementJson): how many so far, why ("first" tracked head, a
+    // "session" (LOCAL reference-space) change, a "reset_seq" change, an "A" press), the reset_seq it stands for
+    // (the baseline counts) and the floor height it used (FLU z).
+    int64_t placements = 0;
+    std::string reason;
+    bool placedSeqValid = false;
+    int64_t placedSeq = 0;
+    double floorZ = 0;
+    const char *pendingWhy = "A";
     // floor: the runtime's floor height (FLU z) when located, else null.
-    void reset(V head, const M &heading, const double *floor = nullptr) {
+    void reset(V head, const M &heading, const double *floor = nullptr, const char *why = "reset") {
         V ahead = head + heading * V{1.6, 0, 0};
-        origin = {{ahead.x, ahead.y, teleop::floorHeight(head, floor)}, heading};
+        floorZ = teleop::floorHeight(head, floor);
+        origin = {{ahead.x, ahead.y, floorZ}, heading};
         floorEstimated = !floor;
         placed = true;
+        placements++;
+        reason = why;
+        placedSeqValid = seqSeen;
+        placedSeq = lastSeq;
     }
     // Gravity-aligned yaw of the headset (head pose in LOCAL-FLU). Looking straight
     // down or up, the headset's up (or down) vector gives the facing instead.
@@ -742,25 +758,30 @@ struct Placement {
     bool update(int64_t providerSession, const Pose &headFlu, bool headValid, const int64_t *resetSeq, bool aPress,
                 const double *floor = nullptr) {
         if (!placed || session != providerSession) {
-            placed = false;
+            placed = false; // (only a session change unplaces: a later placement from here is for it)
             if (headValid)
-                reset(headFlu.p, headYaw(headFlu), floor);
+                reset(headFlu.p, headYaw(headFlu), floor, placements ? "session" : "first");
             session = providerSession;
         }
         if (resetSeq) {
             if (!seqSeen) {
                 seqSeen = true;
                 lastSeq = *resetSeq;
+                placedSeqValid = placed; // the baseline is the seq the current placement stands for
+                placedSeq = lastSeq;
             } else if (*resetSeq != lastSeq) {
                 lastSeq = *resetSeq;
                 pending = true; // Applied as soon as the head is tracked.
+                pendingWhy = "reset_seq";
             }
-        } else if (aPress && headValid)
+        } else if (aPress && headValid) {
             pending = true;
+            pendingWhy = "A";
+        }
         if (!pending || !headValid)
             return false;
         pending = false;
-        reset(headFlu.p, headYaw(headFlu), floor);
+        reset(headFlu.p, headYaw(headFlu), floor, pendingWhy);
         return true;
     }
     Pose world() const { return teleop::compose(origin, {offset, teleop::rotation({0, 0, 1}, yaw)}); }
@@ -769,12 +790,74 @@ struct Placement {
         Pose w = world();
         return {w.p + w.r * (p.p * scale), w.r * p.r};
     }
+    // The sim world in OpenXR LOCAL, as scene_view.h draws it: x_local = R (scale * x_sim) + p, with
+    // (p, R) = questToBase^T * world().
+    Pose simInLocal() const {
+        M c = teleop::transpose(teleop::questToBase());
+        Pose w = world();
+        return {c * w.p, c * w.r};
+    }
 };
+
+// The placement as the "robot_ar" block of a telemetry record (ROBOT_AR.md, "Logged placement"): enough to put
+// the sim world back where the headset drew it, and to see each re-anchoring. floorSpace: the runtime floor space
+// in use (LOCAL_FLOOR / STAGE / none). Matrices are 16 row-major numbers (translation in 3, 7, 11), as the head
+// and controller poses of the record.
+inline void appendNumber(std::string &out, double v) {
+    char b[32];
+    if (std::isfinite(v))
+        std::snprintf(b, sizeof b, "%.6f", v);
+    else
+        std::snprintf(b, sizeof b, "null");
+    out += b;
+}
+inline void appendPoseMatrix(std::string &out, const Pose &p) {
+    const double m[16] = {p.r(0, 0), p.r(0, 1), p.r(0, 2), p.p.x, p.r(1, 0), p.r(1, 1), p.r(1, 2), p.p.y,
+                          p.r(2, 0), p.r(2, 1), p.r(2, 2), p.p.z, 0, 0, 0, 1};
+    out += '[';
+    for (int i = 0; i < 16; i++) {
+        if (i)
+            out += ',';
+        appendNumber(out, m[i]);
+    }
+    out += ']';
+}
+inline std::string placementJson(const Placement &pl, const std::string &floorSpace) {
+    std::string o = "{\"placed\":";
+    o += pl.placed ? "true" : "false";
+    o += ",\"placements\":" + std::to_string(pl.placements);
+    o += ",\"reason\":\"" + pl.reason + "\"";
+    o += ",\"reset_seq\":" + (pl.seqSeen ? std::to_string(pl.lastSeq) : std::string("null"));
+    o += ",\"placed_reset_seq\":" + (pl.placedSeqValid ? std::to_string(pl.placedSeq) : std::string("null"));
+    o += ",\"reset_pending\":";
+    o += pl.pending ? "true" : "false";
+    o += ",\"floor\":\"";
+    o += pl.placements == 0 ? std::string("none") : pl.floorEstimated ? std::string("estimated") : floorSpace;
+    o += "\",\"floor_z\":";
+    appendNumber(o, pl.floorZ);
+    o += ",\"offset\":[";
+    appendNumber(o, pl.offset.x);
+    o += ',';
+    appendNumber(o, pl.offset.y);
+    o += ',';
+    appendNumber(o, pl.offset.z);
+    o += "],\"yaw\":";
+    appendNumber(o, pl.yaw);
+    o += ",\"scale\":";
+    appendNumber(o, pl.scale);
+    o += ",\"origin_flu\":";
+    appendPoseMatrix(o, pl.origin);
+    o += ",\"sim_in_local\":";
+    appendPoseMatrix(o, pl.simInLocal());
+    o += '}';
+    return o;
+}
 
 // -------------------------------------------------------------- config ------
 struct Config {
     bool enabled = false;
     std::string modelUrl, stateUrl, objectsUrl;
+    std::string sceneUrl; // rigid scene (robot_utils docs/scene3d.md): meshes drawn by scene_view.h when it answers
     V offset;
     double yawDeg = 0, scale = 1;
 };
@@ -805,6 +888,8 @@ inline Config parseConfig(const std::string &text) {
             c.stateUrl = v;
         else if (k == "objects")
             c.objectsUrl = v;
+        else if (k == "scene")
+            c.sceneUrl = v; // "off": none
         else if (k == "yaw")
             c.yawDeg = std::strtod(v.c_str(), nullptr);
         else if (k == "scale") {
@@ -830,7 +915,11 @@ inline Config parseConfig(const std::string &text) {
             c.modelUrl = base + "/nodes/description/model/tree?variant=boxes";
         if (c.stateUrl.empty())
             c.stateUrl = base + "/nodes/sim/robot_state/stream?format=jsonl&hz=30";
+        if (c.sceneUrl.empty())
+            c.sceneUrl = base + "/nodes/sim/scene3d"; // tried; a 404 keeps the description view
     }
+    if (c.sceneUrl == "off")
+        c.sceneUrl.clear();
     if (!std::isfinite(c.yawDeg))
         c.yawDeg = 0;
     if (!std::isfinite(c.offset.x + c.offset.y + c.offset.z))
@@ -864,8 +953,9 @@ inline void drawVisual(teleop::Wire &w, const Placement &pl, const Pose &frame, 
 }
 // The whole AR scene in operator FLU. `model` may be null (state only: base axes).
 // `extraObjects` (a separate objects stream) is drawn only when the state lines carry none.
+// sceneMeshes: the rigid scene draws the robot and the objects (scene_view.h): only the overlays here.
 inline void buildScene(teleop::Wire &w, const Model *model, const State *state, const Placement &pl, bool stale,
-                       const std::vector<Object> *extraObjects = nullptr) {
+                       const std::vector<Object> *extraObjects = nullptr, bool sceneMeshes = false) {
     if (!pl.placed)
         return;
     const size_t first = w.segs.size();
@@ -887,7 +977,8 @@ inline void buildScene(teleop::Wire &w, const Model *model, const State *state, 
     if (!state)
         return;
     const Pose base = state->hasBase ? state->base : Pose{};
-    if (model) {
+    if (sceneMeshes) {
+    } else if (model) {
         auto links = forwardKinematics(*model, *state);
         for (const auto &kv : model->visuals) {
             auto it = links.find(kv.first);
@@ -901,7 +992,7 @@ inline void buildScene(teleop::Wire &w, const Model *model, const State *state, 
         w.axes(b, .25 * pl.scale);
     }
     const auto &objects = state->hasObjects || !extraObjects ? state->objects : *extraObjects;
-    for (const auto &ob : objects)
+    for (const auto &ob : sceneMeshes ? std::vector<Object>{} : objects)
         for (const auto &v : ob.geoms)
             drawVisual(w, pl, ob.pose, v, shade(v.coloured ? v.rgb : V{.85, .8, .55}));
     const V red{1, .15, .15}, ok{.6, 1, .5};
