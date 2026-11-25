@@ -21,8 +21,8 @@ class SceneView {
             return false;
         if (s.sceneVersion != version_ || s.view.role != role_)
             rebuild(*s.scene, s.view.role, s.sceneVersion);
-        style_ = s.view.style == "wire" ? MeshRenderer::Wire : s.view.style == "flat" ? MeshRenderer::Flat
-                 : s.view.style == "flat_edges" ? MeshRenderer::FlatEdges : MeshRenderer::HiddenLine;
+        style_ = s.view.style == "wire" ? MeshRenderer::Wire : s.view.style == "hidden_line" ? MeshRenderer::HiddenLine
+                 : s.view.style == "flat_edges" ? MeshRenderer::FlatEdges : MeshRenderer::Flat;
         const auto &sc = *s.scene;
         auto &bm = renderer_.bodies();
         bm.resize(sc.bodies.size());
@@ -118,7 +118,7 @@ class SceneView {
         role_ = role;
     }
     MeshRenderer renderer_;
-    MeshRenderer::Style style_ = MeshRenderer::HiddenLine;
+    MeshRenderer::Style style_ = MeshRenderer::Flat;
     std::map<std::string, int> prims_;
     long version_ = -1, triangles_ = 0;
     std::string role_;

@@ -15,7 +15,7 @@ using robot_ar::Connection;
 using robot_ar::nowNs;
 
 struct View {
-    std::string style = "hidden_line"; // wire | hidden_line | flat | flat_edges
+    std::string style = "flat";        // flat | flat_edges | hidden_line | wire (the sim says which)
     std::string role = "auto";         // auto (robot visual, the rest collision) | visual | collision
 };
 struct Snapshot {
