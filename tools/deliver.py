@@ -22,6 +22,13 @@ def manifest(directory, names):
     )
 
 
+# Native apps: (source, package directory, display name). Each package is a libapp.so + build.json + SHA256SUMS.
+TARGETS = {
+    "telemetry": ("native/telemetry.cpp", "packages/telemetry", "Quest telemetry"),
+    "render_bench": ("native/render_bench.cpp", "packages/render_bench", "Render bench"),
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -29,6 +36,8 @@ def main():
     native.add_argument("--ndk", type=Path, default=Path(os.environ.get(
         "ANDROID_NDK_HOME", "/tmp/teleop_tools/android/ndk/27.2.12479018")))
     native.add_argument("--openxr-aar", type=Path)
+    native.add_argument("--target", choices=sorted(TARGETS), default="telemetry",
+                        help="which native app: telemetry (q run) or render_bench (q bench)")
     package = commands.add_parser("devtools")
     package.add_argument("archive", type=Path)
     args = parser.parse_args()
@@ -41,9 +50,10 @@ def main():
         print("Packaged developer tools. Commit packages/devtools and push when ready.")
         return
 
-    output = ROOT / "build/telemetry.so"
-    command = [sys.executable, str(ROOT / "tools/compile_native.py"),
-               "--ndk", str(args.ndk), "--output", str(output)]
+    source, package, name = TARGETS[args.target]
+    output = ROOT / f"build/{args.target}.so"
+    command = [sys.executable, str(ROOT / "tools/compile_native.py"), "--source", str(ROOT / source),
+               "--name", name, "--ndk", str(args.ndk), "--output", str(output)]
     if args.openxr_aar:
         command += ["--openxr-aar", str(args.openxr_aar)]
     subprocess.run(command, check=True)
@@ -58,13 +68,13 @@ def main():
     header = output.read_bytes()[:20]
     if header[:6] != b"\x7fELF\x02\x01" or header[16:20] != b"\x03\x00\xb7\x00":
         raise RuntimeError("Expected ARM64 ELF shared library")
-    destination = ROOT / "packages/telemetry"
+    destination = ROOT / package
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(output, destination / "libapp.so")
     sources = [*sorted((ROOT / "native").glob("*")), ROOT / "tools/compile_native.py",
                ROOT / "tools/deliver.py"]
     info = {
-        "name": "Quest telemetry", "host_abi": 1, "architecture": "android-arm64",
+        "name": name, "host_abi": 1, "architecture": "android-arm64",
         "minimum_api": 28, "openxr_loader": "1.1.53",
         "library_sha256": sha(output),
         "sources": {str(p.relative_to(ROOT)): sha(p) for p in sources if p.is_file()},
@@ -72,7 +82,7 @@ def main():
     }
     (destination / "build.json").write_text(json.dumps(info, indent=2) + "\n")
     manifest(destination, ["libapp.so", "build.json"])
-    print("Built and checked packages/telemetry. Commit source + package together.")
+    print(f"Built and checked {package}. Commit source + package together.")
 
 
 if __name__ == "__main__":

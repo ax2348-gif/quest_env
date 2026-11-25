@@ -1,0 +1,196 @@
+{
+ "schema": "rigid_scene.v1",
+ "source": "fixture",
+ "conventions": {
+  "up": "+z",
+  "units": "m",
+  "quat": "xyzw"
+ },
+ "crease_deg": 30.0,
+ "bodies": [
+  {
+   "id": 0,
+   "name": "world",
+   "kind": "world",
+   "parent": -1,
+   "dynamic": false,
+   "pose": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "geoms": [
+    {
+     "type": "plane",
+     "pos": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "quat": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "rgba": [
+      0.7,
+      0.7,
+      0.7,
+      1.0
+     ],
+     "role": "both",
+     "half_extents": [
+      0.0,
+      0.0
+     ]
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "name": "table",
+   "kind": "object",
+   "parent": -1,
+   "dynamic": false,
+   "pose": [
+    0.5,
+    0.0,
+    0.3,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "geoms": [
+    {
+     "type": "box",
+     "pos": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "quat": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "rgba": [
+      0.6,
+      0.5,
+      0.4,
+      1.0
+     ],
+     "role": "both",
+     "half_extents": [
+      0.3,
+      0.8,
+      0.015
+     ]
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "name": "link",
+   "kind": "robot",
+   "parent": 0,
+   "dynamic": true,
+   "pose": [
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "geoms": [
+    {
+     "type": "mesh",
+     "pos": [
+      0.0,
+      0.0,
+      0.1
+     ],
+     "quat": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "rgba": [
+      0.7,
+      0.7,
+      0.7,
+      1.0
+     ],
+     "role": "visual",
+     "mesh": 0
+    },
+    {
+     "type": "capsule",
+     "pos": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "quat": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "rgba": [
+      0.7,
+      0.7,
+      0.7,
+      1.0
+     ],
+     "role": "collision",
+     "radius": 0.03,
+     "half_length": 0.1
+    }
+   ],
+   "joint": {
+    "name": "j",
+    "type": "hinge"
+   }
+  }
+ ],
+ "dynamic": [
+  2
+ ],
+ "meshes": [
+  {
+   "name": "cube",
+   "nvert": 8,
+   "ntri": 12,
+   "nedge": 12,
+   "vert_offset": 0,
+   "tri_offset": 96,
+   "edge_offset": 168,
+   "index": "u16",
+   "bounds": [
+    [
+     -0.05,
+     -0.05,
+     -0.05
+    ],
+    [
+     0.05,
+     0.05,
+     0.05
+    ]
+   ],
+   "error": 0.001
+  }
+ ],
+ "blob_bytes": 216,
+ "scene_id": "b39ce51894888805"
+}
