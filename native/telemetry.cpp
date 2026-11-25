@@ -642,6 +642,7 @@ void restoreTerminalTask(android_app* app) {
 
 #include "status_panel.h"
 #include "demo_renderer.h"
+#include "scene_view.h"
 
 class QuestTelemetryApp {
 public:
@@ -704,9 +705,16 @@ public:
             return false;
         }
         if (arEnabled_) {
-            LOGI("Robot AR view: model %s state %s objects %s", arConfig_.modelUrl.c_str(),
-                 arConfig_.stateUrl.c_str(), arConfig_.objectsUrl.empty() ? "(in state)" : arConfig_.objectsUrl.c_str());
+            LOGI("Robot AR view: model %s state %s objects %s scene %s", arConfig_.modelUrl.c_str(),
+                 arConfig_.stateUrl.c_str(), arConfig_.objectsUrl.empty() ? "(in state)" : arConfig_.objectsUrl.c_str(),
+                 arConfig_.sceneUrl.empty() ? "(off)" : arConfig_.sceneUrl.c_str());
             arClient_.start(arConfig_);
+            if (!arConfig_.sceneUrl.empty()) {
+                if (sceneView_.init())
+                    sceneClient_.start(arConfig_.sceneUrl);
+                else
+                    LOGE("Rigid scene renderer initialization failed; description view only");
+            }
         }
         LOGI("Native clutch intent enabled; kinematic demo %s", demoEnabled_ ? "enabled" : "disabled");
         LOGI("Legacy %s logcat controller line %s", kControllerLogTag,
@@ -719,6 +727,8 @@ public:
 
     void shutdown() {
         arClient_.stop();
+        sceneClient_.stop();
+        sceneView_.shutdown();
         controllerServer_.shutdown();
         demoRenderer_.shutdown();
         panel_.shutdown();
@@ -940,10 +950,33 @@ private:
             LOGW("Robot AR description: %s (%s)", snap.modelNote.c_str(), snap.modelUrl.c_str());
             arLoggedNote_ = snap.modelNote;
         }
+        // The rigid scene (meshes, ghosts) when the server has one: the description and objects are then not drawn.
+        const auto scene = sceneClient_.snapshot();
+        const bool sceneStale = scene.frameRxNs && double(now - scene.frameRxNs) * 1e-9 > robot_ar::kStaleAfterS;
+        sceneActive_ = render && !arConfig_.sceneUrl.empty() && sceneView_.update(scene, arPlacement_, sceneStale);
+        if (sceneActive_)
+            demoRenderer_.meshDraw = [this](const float *vp) {
+                mesh_scene::Mat4 m;
+                std::memcpy(m.m, vp, sizeof m.m);
+                sceneView_.draw(m);
+            };
+        else
+            demoRenderer_.meshDraw = nullptr;
+        if (scene.sceneVersion != sceneLoggedVersion_ || scene.error != sceneLoggedError_) {
+            LOGI("Robot AR scene: version %ld %s%s", scene.sceneVersion, scene.error.empty() ? "ok" : "",
+                 scene.error.c_str());
+            sceneLoggedVersion_ = scene.sceneVersion;
+            sceneLoggedError_ = scene.error;
+        }
+        if (sceneActive_)
+            panel_.arLines.push_back("SCENE " + scene.view.style + " " + std::to_string(sceneView_.triangles() / 1000) +
+                                     "K TRIS");
+        else if (!arConfig_.sceneUrl.empty() && !scene.unavailable && !scene.error.empty())
+            panel_.arLines.push_back(scene.error);
         arWire_.clear();
         if (render)
             robot_ar::buildScene(arWire_, snap.model.get(), snap.state.get(), arPlacement_,
-                                 robot_ar::isStale(snap, now), snap.objects.get());
+                                 robot_ar::isStale(snap, now), snap.objects.get(), sceneActive_);
     }
 
     android_app* app_ = nullptr;
@@ -960,6 +993,11 @@ private:
     robot_ar::Client arClient_;
     robot_ar::Placement arPlacement_;
     teleop::Wire arWire_;
+    scene_client::Client sceneClient_;
+    SceneView sceneView_;
+    bool sceneActive_ = false;
+    long sceneLoggedVersion_ = 0;
+    std::string sceneLoggedError_;
     bool arEnabled_ = false, arLoggedConnected_ = false;
     std::string arLoggedError_, arLoggedNote_;
     bool legacyLogcat_ = false;

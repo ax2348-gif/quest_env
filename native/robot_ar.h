@@ -775,6 +775,7 @@ struct Placement {
 struct Config {
     bool enabled = false;
     std::string modelUrl, stateUrl, objectsUrl;
+    std::string sceneUrl; // rigid scene (robot_utils docs/scene3d.md): meshes drawn by scene_view.h when it answers
     V offset;
     double yawDeg = 0, scale = 1;
 };
@@ -805,6 +806,8 @@ inline Config parseConfig(const std::string &text) {
             c.stateUrl = v;
         else if (k == "objects")
             c.objectsUrl = v;
+        else if (k == "scene")
+            c.sceneUrl = v; // "off": none
         else if (k == "yaw")
             c.yawDeg = std::strtod(v.c_str(), nullptr);
         else if (k == "scale") {
@@ -830,7 +833,11 @@ inline Config parseConfig(const std::string &text) {
             c.modelUrl = base + "/nodes/description/model/tree?variant=boxes";
         if (c.stateUrl.empty())
             c.stateUrl = base + "/nodes/sim/robot_state/stream?format=jsonl&hz=30";
+        if (c.sceneUrl.empty())
+            c.sceneUrl = base + "/nodes/sim/scene3d"; // tried; a 404 keeps the description view
     }
+    if (c.sceneUrl == "off")
+        c.sceneUrl.clear();
     if (!std::isfinite(c.yawDeg))
         c.yawDeg = 0;
     if (!std::isfinite(c.offset.x + c.offset.y + c.offset.z))
@@ -864,8 +871,9 @@ inline void drawVisual(teleop::Wire &w, const Placement &pl, const Pose &frame, 
 }
 // The whole AR scene in operator FLU. `model` may be null (state only: base axes).
 // `extraObjects` (a separate objects stream) is drawn only when the state lines carry none.
+// sceneMeshes: the rigid scene draws the robot and the objects (scene_view.h): only the overlays here.
 inline void buildScene(teleop::Wire &w, const Model *model, const State *state, const Placement &pl, bool stale,
-                       const std::vector<Object> *extraObjects = nullptr) {
+                       const std::vector<Object> *extraObjects = nullptr, bool sceneMeshes = false) {
     if (!pl.placed)
         return;
     const size_t first = w.segs.size();
@@ -887,7 +895,8 @@ inline void buildScene(teleop::Wire &w, const Model *model, const State *state, 
     if (!state)
         return;
     const Pose base = state->hasBase ? state->base : Pose{};
-    if (model) {
+    if (sceneMeshes) {
+    } else if (model) {
         auto links = forwardKinematics(*model, *state);
         for (const auto &kv : model->visuals) {
             auto it = links.find(kv.first);
@@ -901,7 +910,7 @@ inline void buildScene(teleop::Wire &w, const Model *model, const State *state, 
         w.axes(b, .25 * pl.scale);
     }
     const auto &objects = state->hasObjects || !extraObjects ? state->objects : *extraObjects;
-    for (const auto &ob : objects)
+    for (const auto &ob : sceneMeshes ? std::vector<Object>{} : objects)
         for (const auto &v : ob.geoms)
             drawVisual(w, pl, ob.pose, v, shade(v.coloured ? v.rgb : V{.85, .8, .55}));
     const V red{1, .15, .15}, ok{.6, 1, .5};

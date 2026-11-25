@@ -1,5 +1,6 @@
 #pragma once
 #include "wireframe.h"
+#include <functional>
 // Stereo world-space wireframes, composited with alpha over passthrough.
 class DemoRenderer {
     struct Eye {
@@ -18,6 +19,13 @@ class DemoRenderer {
                                                            {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrCompositionLayerProjection composition{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     std::vector<Vertex> vertices;
+
+  public:
+    // Drawn into each eye before the lines, with that eye's view-projection (XR LOCAL space): the rigid scene's
+    // meshes (scene_view.h). Set it to draw even when there are no lines.
+    std::function<void(const float *viewProj)> meshDraw;
+
+  private:
     static teleop::M orientation(XrQuaternionf q) {
         double n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
         if (n < 1e-8)
@@ -250,7 +258,7 @@ class DemoRenderer {
                                              const std::vector<teleop::Segment> *extra) {
         if (robot && !robot->placed)
             robot = nullptr;
-        if (!program || (!robot && (!extra || extra->empty())))
+        if (!program || (!robot && (!extra || extra->empty()) && !meshDraw))
             return nullptr;
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
         locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -399,6 +407,14 @@ class DemoRenderer {
                 bb.z = a.z + (b.z - a.z) * hi;
                 bounded.push_back(aa);
                 bounded.push_back(bb);
+            }
+            if (meshDraw && complete) {
+                meshDraw(vp);
+                glUseProgram(program); // the mesh renderer leaves its own program and arrays bound
+                glBindVertexArray(vao);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(GL_TRUE);
             }
             glBufferData(GL_ARRAY_BUFFER, bounded.size() * sizeof(Vertex), bounded.data(), GL_STREAM_DRAW);
             glUniformMatrix4fv(matrixLoc, 1, GL_FALSE, vp);
