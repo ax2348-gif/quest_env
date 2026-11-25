@@ -17,6 +17,8 @@ using robot_ar::nowNs;
 struct View {
     std::string style = "flat";        // flat | flat_edges | hidden_line | wire (the sim says which)
     std::string role = "auto";         // auto (robot visual, the rest collision) | visual | collision
+    bool hasAnchor = false;            // the sim-world point [x, y, yaw deg] to place in front of the operator
+    double anchor[3] = {0, 0, 0};
 };
 struct Snapshot {
     std::shared_ptr<const mesh_scene::Scene> scene;
@@ -37,6 +39,10 @@ inline bool parseView(const std::string &text, View &out) {
         out.style = s->s;
     if (const auto *r = j.get("role"); r && r->isStr())
         out.role = r->s;
+    const auto *a = j.get("anchor");
+    out.hasAnchor = a && a->numbers(3);
+    for (int i = 0; out.hasAnchor && i < 3; i++)
+        out.anchor[i] = a->a[i].n;
     return true;
 }
 

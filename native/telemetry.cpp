@@ -952,6 +952,19 @@ private:
         }
         // The rigid scene (meshes, ghosts) when the server has one: the description and objects are then not drawn.
         const auto scene = sceneClient_.snapshot();
+        // The server's view anchor: that sim-world point goes where the world origin would (in front of the
+        // operator), on top of --ar-offset / --ar-yaw. Applied live; it moves the whole scene.
+        {
+            double yaw = arConfig_.yawDeg * teleop::pi / 180;
+            teleop::V off = arConfig_.offset;
+            if (scene.scene && scene.view.hasAnchor) {
+                yaw += scene.view.anchor[2] * teleop::pi / 180;
+                teleop::V a{scene.view.anchor[0], scene.view.anchor[1], 0};
+                off = off - teleop::rotation({0, 0, 1}, yaw) * (a * arPlacement_.scale);
+            }
+            arPlacement_.offset = off;
+            arPlacement_.yaw = yaw;
+        }
         const bool sceneStale = scene.frameRxNs && double(now - scene.frameRxNs) * 1e-9 > robot_ar::kStaleAfterS;
         sceneActive_ = render && !arConfig_.sceneUrl.empty() && sceneView_.update(scene, arPlacement_, sceneStale);
         if (sceneActive_)
