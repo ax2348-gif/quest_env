@@ -453,3 +453,11 @@ passthrough, 1.6 m ahead along the head's yaw at the first tracked head; a sim
 reset (`reset_seq`) or, without one, A re-anchors it the same way; Y does nothing to it. It coexists with
 telemetry and either teleop scheme and does not change the telemetry records. See
 [ROBOT_AR.md](ROBOT_AR.md) for options, endpoint formats and validation.
+
+## Body tracking
+
+`qr --body[=core|all]` forwards Meta body tracking (`XR_FB_body_tracking`, plus full body and
+fidelity when the runtime has them) as a `body` block in every telemetry record. That's every
+tracked joint's LOCAL pose and flags, the joint set, confidence and fidelity. It is off by
+default and needs runtime 1.7.0 with the body-tracking permission granted. See
+[BODY_TRACKING.md](BODY_TRACKING.md) for the schema, options and cost.

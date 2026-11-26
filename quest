@@ -17,6 +17,7 @@ launch() {
     base_frame=live
     scheme=standard
     ar_lines=""
+    body_lines=""
     for option in "$@"; do
         case "$option" in
             --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-scene=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
@@ -44,13 +45,24 @@ launch() {
                 esac
                 ar_lines="$ar_lines$key=$value
 " ;;
+            --body|--body=core|--body=all)
+                case "$option" in --body=all) joints=all ;; *) joints=core ;; esac
+                body_lines="${body_lines}joints=$joints
+" ;;
+            --body=off) body_lines="" ;;
+            --body-set=default|--body-set=full_body) body_lines="${body_lines}joint_set=${option#*=}
+" ;;
+            --body-fidelity=high|--body-fidelity=low|--body-fidelity=none) body_lines="${body_lines}fidelity=${option#*=}
+" ;;
+            --body-every=[1-9]|--body-every=[1-9][0-9]|--body-every=[1-9][0-9][0-9]) body_lines="${body_lines}every=${option#*=}
+" ;;
             --no-viewer) viewer=no ;;
             -s|--sim) demo=on ;;
             --scheme=body-frozen) scheme=body-frozen ;;
             --scheme=standard) scheme=standard ;;
             --base-frame=live) base_frame=live ;;
             --base-frame=frozen) base_frame=frozen ;;
-            *) echo "Unknown option: $option (use -s, --scheme=standard|body-frozen, --base-frame=live|frozen, --ar=URL, --no-viewer)" >&2; exit 2 ;;
+            *) echo "Unknown option: $option (use -s, --scheme=standard|body-frozen, --base-frame=live|frozen, --ar=URL, --body[=core|all], --no-viewer)" >&2; exit 2 ;;
         esac
     done
     if [ "$operation" = builtin ] && [ "$demo" = on ]; then
@@ -87,6 +99,20 @@ launch() {
         mv "$HOME/.config/quest-env/robot-ar.tmp" "$HOME/.config/quest-env/robot-ar"
     else
         rm -f "$HOME/.config/quest-env/robot-ar"
+    fi
+    # Body tracking (BODY_TRACKING.md), read once at native initialization; a launch without --body turns it off.
+    if [ -n "$body_lines" ]; then
+        case "$body_lines" in
+            *joints=*) ;;
+            *) echo "--body-* options need --body[=core|all]" >&2; exit 2 ;;
+        esac
+        if [ "$operation" = builtin ]; then
+            echo "The bundled APK library has no body tracking; use q run --body." >&2; exit 2
+        fi
+        (umask 077; printf '%s' "$body_lines" > "$HOME/.config/quest-env/body-tracking.tmp")
+        mv "$HOME/.config/quest-env/body-tracking.tmp" "$HOME/.config/quest-env/body-tracking"
+    else
+        rm -f "$HOME/.config/quest-env/body-tracking"
     fi
     panel_request="$HOME/.config/quest-env/restore-terminal-once"
     rm -f "$panel_request"
@@ -179,6 +205,7 @@ case "${1:-help}" in
         echo "run -s --scheme=body-frozen: independent clutch frames; left stick click toggles smooth automove."
         echo "run -s enables the local kinematics demo; --base-frame=frozen freezes clutch base frames."
         echo "run --ar=http://HOST[:PORT] shows the robot (description + robot_state stream) in AR; see ROBOT_AR.md."
+        echo "run --body[=core|all] forwards Meta body tracking in each record (needs runtime 1.7.0); see BODY_TRACKING.md."
         echo "pull updates files only; run loads the updated native library."
         ;;
 esac

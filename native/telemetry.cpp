@@ -27,6 +27,33 @@
 #include "teleop_core.h"
 #include "wireframe.h"
 #include "robot_ar_client.h"
+#include "body_tracking.h"
+
+// XR_META_body_tracking_fidelity is in Meta's preview headers (meta_openxr_preview/
+// meta_body_tracking_fidelity.h), not in the Khronos 1.1.53 loader headers.
+#ifndef XR_META_body_tracking_fidelity
+#define XR_META_body_tracking_fidelity 1
+#define XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME "XR_META_body_tracking_fidelity"
+static const XrStructureType XR_TYPE_BODY_TRACKING_FIDELITY_STATUS_META = (XrStructureType)1000284000;
+static const XrStructureType XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META = (XrStructureType)1000284001;
+typedef enum XrBodyTrackingFidelityMETA {
+    XR_BODY_TRACKING_FIDELITY_LOW_META = 1,
+    XR_BODY_TRACKING_FIDELITY_HIGH_META = 2,
+    XR_BODY_TRACKING_FIDELITY_MAX_ENUM_META = 0x7FFFFFFF
+} XrBodyTrackingFidelityMETA;
+typedef struct XrSystemPropertiesBodyTrackingFidelityMETA {
+    XrStructureType type;
+    void* XR_MAY_ALIAS next;
+    XrBool32 supportsBodyTrackingFidelity;
+} XrSystemPropertiesBodyTrackingFidelityMETA;
+typedef struct XrBodyTrackingFidelityStatusMETA {
+    XrStructureType type;
+    const void* XR_MAY_ALIAS next;
+    XrBodyTrackingFidelityMETA fidelity;
+} XrBodyTrackingFidelityStatusMETA;
+typedef XrResult(XRAPI_PTR* PFN_xrRequestBodyTrackingFidelityMETA)(
+    XrBodyTrackerFB bodyTracker, const XrBodyTrackingFidelityMETA fidelity);
+#endif
 
 #define LOG_TAG "QuestRuntimeXR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -542,6 +569,37 @@ bool booleanIntentExtra(android_app* app, const char* key, bool defaultValue) {
     return result;
 }
 
+// Context.checkSelfPermission(name): 1 granted, 0 denied, -1 unknown (JNI failure).
+int permissionState(android_app* app, const char* name) {
+    JavaVM* vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    bool detach = false;
+    const jint envStatus = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (envStatus == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return -1;
+        detach = true;
+    } else if (envStatus != JNI_OK || env == nullptr) {
+        return -1;
+    }
+    int result = -1;
+    jobject activity = app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID check = env->GetMethodID(activityClass, "checkSelfPermission", "(Ljava/lang/String;)I");
+    if (check != nullptr) {
+        jstring permission = env->NewStringUTF(name);
+        const jint r = env->CallIntMethod(activity, check, permission);
+        if (!env->ExceptionCheck()) result = r == 0 ? 1 : 0;   // PERMISSION_GRANTED == 0
+        env->DeleteLocalRef(permission);
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        result = -1;
+    }
+    env->DeleteLocalRef(activityClass);
+    if (detach) vm->DetachCurrentThread();
+    return result;
+}
+
 // Re-show the most recent existing terminal after entering immersive mode.
 // Reuse its Android task and PTY; never create a replacement terminal/session.
 void restoreTerminalTask(android_app* app) {
@@ -650,6 +708,15 @@ public:
         : app_(app), enableHandTelemetry_(enableHandTelemetry) {}
 
     bool init() {
+        if (app_->activity->internalDataPath) {
+            // Body tracking (BODY_TRACKING.md) decides which extensions the instance enables.
+            const std::string path = std::string(app_->activity->internalDataPath) +
+                "/home/.config/quest-env/body-tracking";
+            std::ifstream bodyFile(path);
+            std::stringstream bodyText;
+            if (bodyFile) bodyText << bodyFile.rdbuf();
+            bodyCfg_ = body::parseConfig(bodyText.str(), static_cast<bool>(bodyFile));
+        }
         if (!initLoader()) {
             return false;
         }
@@ -676,6 +743,7 @@ public:
             !rightMarker_.init(session_, true)) return false;
         createActions();
         createHandTrackers();
+        createBodyTracker();
         if (app_->activity->internalDataPath) {
             const std::string config = std::string(app_->activity->internalDataPath) +
                 "/home/.config/quest-env/";
@@ -740,6 +808,10 @@ public:
             }
             if (handTrackerRight_ != XR_NULL_HANDLE && xrDestroyHandTrackerEXT_) {
                 xrDestroyHandTrackerEXT_(handTrackerRight_);
+            }
+            if (bodyTracker_ != XR_NULL_HANDLE && xrDestroyBodyTrackerFB_) {
+                xrDestroyBodyTrackerFB_(bodyTracker_);
+                bodyTracker_ = XR_NULL_HANDLE;
             }
             for (XrSpace space : actionSpaces_) {
                 if (space != XR_NULL_HANDLE) {
@@ -1031,6 +1103,21 @@ private:
     XrSessionState sessionState_ = XR_SESSION_STATE_UNKNOWN;
     bool sessionRunning_ = false;
     bool handTrackingEnabled_ = false;
+    body::Config bodyCfg_;
+    bool bodyExtEnabled_ = false;
+    bool bodyFullBodyExtEnabled_ = false;
+    bool bodyFidelityExtEnabled_ = false;
+    bool bodySupported_ = false;
+    bool bodyFullBodySupported_ = false;
+    bool bodyFidelitySupported_ = false;
+    body::Sample body_;
+    int64_t bodyRetryNs_ = 0;
+    PFN_xrCreateBodyTrackerFB xrCreateBodyTrackerFB_ = nullptr;
+    PFN_xrDestroyBodyTrackerFB xrDestroyBodyTrackerFB_ = nullptr;
+    PFN_xrLocateBodyJointsFB xrLocateBodyJointsFB_ = nullptr;
+    PFN_xrRequestBodyTrackingFidelityMETA xrRequestBodyTrackingFidelityMETA_ = nullptr;
+    XrBodyTrackerFB bodyTracker_ = XR_NULL_HANDLE;
+    std::array<XrBodyJointLocationFB, body::kFullBodyJointCount> bodyJoints_{};
     bool touchPlusEnabled_ = false;
     bool localFloorEnabled_ = false;
     XrSpace floorSpace_ = XR_NULL_HANDLE; // LOCAL_FLOOR or STAGE: its origin's height is the floor.
@@ -1143,6 +1230,27 @@ private:
             }
         }
 
+        if (bodyCfg_.enabled) {
+            // Body tracking is opt-in (quest run --body); each extension degrades on its own.
+            if (isExtensionAvailable(XR_FB_BODY_TRACKING_EXTENSION_NAME)) {
+                extensions.push_back(XR_FB_BODY_TRACKING_EXTENSION_NAME);
+                bodyExtEnabled_ = true;
+                if (bodyCfg_.fullBody && isExtensionAvailable(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME)) {
+                    extensions.push_back(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME);
+                    bodyFullBodyExtEnabled_ = true;
+                }
+                if (bodyCfg_.fidelity && isExtensionAvailable(XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME)) {
+                    extensions.push_back(XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME);
+                    bodyFidelityExtEnabled_ = true;
+                }
+            } else {
+                body_.reason = "XR_FB_body_tracking unavailable";
+            }
+            LOGI("Body tracking requested: XR_FB_body_tracking %s, full body %s, fidelity %s",
+                 bodyExtEnabled_ ? "on" : "unavailable", bodyFullBodyExtEnabled_ ? "on" : "off/unavailable",
+                 bodyFidelityExtEnabled_ ? "on" : "off/unavailable");
+        }
+
         XrInstanceCreateInfoAndroidKHR androidInfo{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
         androidInfo.applicationVM = app_->activity->vm;
         androidInfo.applicationActivity = app_->activity->clazz;
@@ -1180,8 +1288,35 @@ private:
             XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES_FB};
         XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
         systemProperties.next = &passthroughProperties;
+        // Body tracking capabilities, chained only for the extensions that are enabled.
+        XrSystemBodyTrackingPropertiesFB bodyProperties{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB};
+        XrSystemPropertiesBodyTrackingFullBodyMETA fullBodyProperties{
+            XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FULL_BODY_META};
+        XrSystemPropertiesBodyTrackingFidelityMETA fidelityProperties{
+            XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META};
+        if (bodyExtEnabled_) {
+            bodyProperties.next = systemProperties.next;
+            systemProperties.next = &bodyProperties;
+            if (bodyFullBodyExtEnabled_) {
+                fullBodyProperties.next = systemProperties.next;
+                systemProperties.next = &fullBodyProperties;
+            }
+            if (bodyFidelityExtEnabled_) {
+                fidelityProperties.next = systemProperties.next;
+                systemProperties.next = &fidelityProperties;
+            }
+        }
         if (!XR_CHECK(xrGetSystemProperties(instance_, systemId_, &systemProperties))) {
             return false;
+        }
+        bodySupported_ = bodyExtEnabled_ && bodyProperties.supportsBodyTracking == XR_TRUE;
+        bodyFullBodySupported_ = bodyFullBodyExtEnabled_ && fullBodyProperties.supportsFullBodyTracking == XR_TRUE;
+        bodyFidelitySupported_ = bodyFidelityExtEnabled_ &&
+            fidelityProperties.supportsBodyTrackingFidelity == XR_TRUE;
+        if (bodyExtEnabled_) {
+            LOGI("Body tracking system support: body %d, full body %d, fidelity %d", bodySupported_ ? 1 : 0,
+                 bodyFullBodySupported_ ? 1 : 0, bodyFidelitySupported_ ? 1 : 0);
+            if (!bodySupported_) body_.reason = "the system reports no body tracking support";
         }
         if (passthroughProperties.supportsPassthrough != XR_TRUE) {
             LOGE("OpenXR system reports that passthrough is unsupported");
@@ -1444,6 +1579,101 @@ private:
         XR_CHECK(xrCreateHandTrackerEXT_(session_, &info, &handTrackerRight_));
     }
 
+    // Creates the body tracker (BODY_TRACKING.md); retried from the frame loop every
+    // 5 s while it fails (e.g. the permission is granted after launch).
+    void createBodyTracker() {
+        if (!bodySupported_ || bodyTracker_ != XR_NULL_HANDLE) return;
+        bodyRetryNs_ = monotonicNs();
+        if (!xrCreateBodyTrackerFB_) {
+            xrGetInstanceProcAddr(instance_, "xrCreateBodyTrackerFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&xrCreateBodyTrackerFB_));
+            xrGetInstanceProcAddr(instance_, "xrDestroyBodyTrackerFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&xrDestroyBodyTrackerFB_));
+            xrGetInstanceProcAddr(instance_, "xrLocateBodyJointsFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&xrLocateBodyJointsFB_));
+            if (bodyFidelitySupported_)
+                xrGetInstanceProcAddr(instance_, "xrRequestBodyTrackingFidelityMETA",
+                    reinterpret_cast<PFN_xrVoidFunction*>(&xrRequestBodyTrackingFidelityMETA_));
+        }
+        if (!xrCreateBodyTrackerFB_ || !xrDestroyBodyTrackerFB_ || !xrLocateBodyJointsFB_) {
+            body_.reason = "body tracking function pointers unavailable";
+            return;
+        }
+        const int permission = permissionState(app_, "com.oculus.permission.BODY_TRACKING");
+        XrBodyTrackerCreateInfoFB info{XR_TYPE_BODY_TRACKER_CREATE_INFO_FB};
+        const bool full = bodyCfg_.fullBody && bodyFullBodySupported_;
+        info.bodyJointSet = full ? XR_BODY_JOINT_SET_FULL_BODY_META : XR_BODY_JOINT_SET_DEFAULT_FB;
+        XrResult result = xrCreateBodyTrackerFB_(session_, &info, &bodyTracker_);
+        if (XR_FAILED(result) && full) {
+            LOGW("Full-body tracker failed (%d); trying the default joint set", result);
+            info.bodyJointSet = XR_BODY_JOINT_SET_DEFAULT_FB;
+            result = xrCreateBodyTrackerFB_(session_, &info, &bodyTracker_);
+        }
+        if (XR_FAILED(result)) {
+            bodyTracker_ = XR_NULL_HANDLE;
+            body_.reason = "xrCreateBodyTrackerFB failed (" + std::to_string(static_cast<int>(result)) +
+                "); BODY_TRACKING permission " +
+                (permission == 1 ? "granted" : permission == 0 ? "not granted" : "unknown");
+            LOGW("Body tracking: %s", body_.reason.c_str());
+            return;
+        }
+        body_.available = true;
+        body_.reason.clear();
+        body_.jointSet = static_cast<int32_t>(info.bodyJointSet);
+        body_.jointCount = info.bodyJointSet == XR_BODY_JOINT_SET_FULL_BODY_META ?
+            body::kFullBodyJointCount : body::kDefaultJointCount;
+        body_.allJoints = bodyCfg_.allJoints;
+        body_.joints.assign(body_.jointCount, body::Joint{});
+        body_.fidelityRequested = 0;
+        if (xrRequestBodyTrackingFidelityMETA_ && bodyCfg_.fidelity) {
+            const auto want = bodyCfg_.fidelity == 2 ? XR_BODY_TRACKING_FIDELITY_HIGH_META :
+                XR_BODY_TRACKING_FIDELITY_LOW_META;
+            if (XR_CHECK(xrRequestBodyTrackingFidelityMETA_(bodyTracker_, want))) body_.fidelityRequested = want;
+        }
+        LOGI("Body tracker created: joint set %s (%d joints), fidelity requested %s, sending %s joints every %d frame(s)",
+             body_.jointCount == body::kFullBodyJointCount ? "full_body" : "default", body_.jointCount,
+             body::fidelityName(body_.fidelityRequested) ? body::fidelityName(body_.fidelityRequested) : "none",
+             bodyCfg_.allJoints ? "all" : "core", bodyCfg_.every);
+    }
+
+    // Locates the body joints at the frame's time in LOCAL (the head's and the
+    // controllers' space) and appends the body block.
+    void appendBodyJson(std::ostringstream& json, XrTime time) {
+        if (bodyTracker_ == XR_NULL_HANDLE && bodySupported_ && monotonicNs() - bodyRetryNs_ > 5000000000LL)
+            createBodyTracker();
+        if (bodyTracker_ == XR_NULL_HANDLE) {
+            body_.available = false;
+            if (body_.reason.empty()) body_.reason = "body tracking unavailable";
+            body::appendJson(json, body_);
+            return;
+        }
+        XrBodyTrackingFidelityStatusMETA fidelity{XR_TYPE_BODY_TRACKING_FIDELITY_STATUS_META};
+        XrBodyJointLocationsFB locations{XR_TYPE_BODY_JOINT_LOCATIONS_FB};
+        if (bodyFidelitySupported_) locations.next = &fidelity;
+        locations.jointCount = static_cast<uint32_t>(body_.jointCount);
+        locations.jointLocations = bodyJoints_.data();
+        XrBodyJointsLocateInfoFB info{XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB};
+        info.baseSpace = localSpace_;
+        info.time = time;
+        const XrResult result = xrLocateBodyJointsFB_(bodyTracker_, &info, &locations);
+        body_.active = XR_SUCCEEDED(result) && locations.isActive == XR_TRUE;
+        body_.confidence = body_.active ? locations.confidence : 0.0f;
+        body_.skeletonChangedCount = locations.skeletonChangedCount;
+        body_.timeNs = static_cast<int64_t>(locations.time);
+        body_.fidelity = bodyFidelitySupported_ && body_.active ? static_cast<int>(fidelity.fidelity) : 0;
+        if (body_.active) {
+            for (int i = 0; i < body_.jointCount; ++i) {
+                const auto& src = bodyJoints_[i];
+                auto& dst = body_.joints[i];
+                dst.flags = src.locationFlags;
+                dst.p[0] = src.pose.position.x; dst.p[1] = src.pose.position.y; dst.p[2] = src.pose.position.z;
+                dst.q[0] = src.pose.orientation.x; dst.q[1] = src.pose.orientation.y;
+                dst.q[2] = src.pose.orientation.z; dst.q[3] = src.pose.orientation.w;
+            }
+        }
+        body::appendJson(json, body_);
+    }
+
     bool getBool(XrAction action, XrPath hand = XR_NULL_PATH) {
         if (sessionState_ != XR_SESSION_STATE_FOCUSED || actionSyncResult_ != XR_SUCCESS) return false;
         XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO};
@@ -1636,6 +1866,9 @@ private:
             json << ",\"temperature_c\":" << jsonFixed(battery_.temperature_c, 1) << "}";
         }
         if (arEnabled_) appendRobotArJson(json, time);   // additive: older consumers ignore it
+        // Body tracking (opt-in, BODY_TRACKING.md): additive, every `every`th record.
+        if (bodyCfg_.enabled && (controllerFrameSeq_ - 1) % static_cast<uint64_t>(bodyCfg_.every) == 0)
+            appendBodyJson(json, time);
         json << ",\"head\":{";
         json << "\"position_valid\":";
         appendJsonBool(json, (headLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0);

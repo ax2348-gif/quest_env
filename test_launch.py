@@ -76,4 +76,20 @@ with tempfile.TemporaryDirectory() as tmp:
         assert code == 2 and not calls and not ar.exists(), bad
     code, calls = invoke(['builtin', '--no-viewer', '--ar=http://a'])
     assert code == 2 and not calls
-print('PASS: TTY default viewer, --no-viewer, noninteractive use, native failure, invalid flags, robot AR config')
+    # Body tracking: a config file per launch; absent without --body.
+    body = directory / '.config/quest-env/body-tracking'
+    code, calls = invoke(['run', '--body', '--no-viewer'])
+    assert code == 0 and body.read_text() == 'joints=core\n', body.read_text()
+    assert oct(body.stat().st_mode & 0o777) == '0o600'
+    code, calls = invoke(['run', '--body-set=default', '--body=all', '--body-fidelity=low', '--body-every=2',
+                          '--no-viewer'])
+    assert code == 0 and body.read_text() == 'joint_set=default\njoints=all\nfidelity=low\nevery=2\n', body.read_text()
+    code, calls = invoke(['run', '--no-viewer'])
+    assert code == 0 and not body.exists()
+    for bad in (['--body-fidelity=high'], ['--body=legs'], ['--body', '--body-every=0'], ['--body-every=1000']):
+        code, calls = invoke(['run', '--no-viewer', *bad])
+        assert code == 2 and not calls and not body.exists(), bad
+    code, calls = invoke(['builtin', '--no-viewer', '--body'])
+    assert code == 2 and not calls
+print('PASS: TTY default viewer, --no-viewer, noninteractive use, native failure, invalid flags, robot AR config, '
+      'body tracking config')

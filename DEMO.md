@@ -86,6 +86,8 @@ head/controller poses, buttons and tracking fields. It now also contains:
 - `device` (when Android reports it): `battery_pct` (0..100), `charging`, `plugged`, `temperature_c`, from the
   sticky `ACTION_BATTERY_CHANGED` broadcast, refreshed every 10 s (the SSH shell's app sandbox can read neither
   sysfs nor the battery service, so this is the only battery reading available off the headset).
+- `body` (only with `q run --body`): Meta body tracking, schema `teleop.quest_body.v1`; see
+  [BODY_TRACKING.md](BODY_TRACKING.md).
 - `control_intent`: schema `teleop.operator_intent.v1`, session ID,
   `frame: operator_base_flu`, `translation_limit_m`, `base_velocity` and `hands`.
   `operator_from_quest` is the current 9-element row-major basis rotation and
