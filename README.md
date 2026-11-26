@@ -454,6 +454,12 @@ reset (`reset_seq`) or, without one, A re-anchors it the same way; Y does nothin
 telemetry and either teleop scheme and does not change the telemetry records. See
 [ROBOT_AR.md](ROBOT_AR.md) for options, endpoint formats and validation.
 
+## Haptics
+
+With `--ar=URL` the native app also opens the teleop node's vibration stream
+(`<url>/nodes/quest_teleop/haptics?stream=1`; `--ar-haptics=URL|off`) and plays its pulses and
+levels on the controllers. No permission and no runtime change. See [HAPTICS.md](HAPTICS.md).
+
 ## Body tracking
 
 `qr --body[=core|all]` forwards Meta body tracking (`XR_FB_body_tracking`, plus full body and

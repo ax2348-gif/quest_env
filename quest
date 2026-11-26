@@ -20,7 +20,7 @@ launch() {
     body_lines=""
     for option in "$@"; do
         case "$option" in
-            --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-scene=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
+            --ar=*|--sim-ar=*|--ar-model=*|--ar-state=*|--ar-objects=*|--ar-scene=*|--ar-haptics=*|--ar-offset=*|--ar-yaw=*|--ar-scale=*)
                 value="${option#*=}"
                 case "$value" in
                     # One config line per option: no empty values, blanks or newlines.
@@ -33,6 +33,7 @@ launch() {
                     --ar-state) key=state ;;
                     --ar-objects) key=objects ;;
                     --ar-scene) key=scene ;;
+                    --ar-haptics) key=haptics ;;
                     --ar-offset) key=offset ;;
                     --ar-yaw) key=yaw ;;
                     --ar-scale) key=scale ;;
@@ -40,7 +41,7 @@ launch() {
                 case "$key" in
                     url|model|state|objects)
                         case "$value" in http://*) ;; *) echo "$option needs an http:// URL" >&2; exit 2 ;; esac ;;
-                    scene)
+                    scene|haptics)
                         case "$value" in http://*|off) ;; *) echo "$option needs an http:// URL or off" >&2; exit 2 ;; esac ;;
                 esac
                 ar_lines="$ar_lines$key=$value
@@ -206,6 +207,7 @@ case "${1:-help}" in
         echo "run -s enables the local kinematics demo; --base-frame=frozen freezes clutch base frames."
         echo "run --ar=http://HOST[:PORT] shows the robot (description + robot_state stream) in AR; see ROBOT_AR.md."
         echo "run --body[=core|all] forwards Meta body tracking in each record (needs runtime 1.7.0); see BODY_TRACKING.md."
+        echo "run --ar=URL also plays the teleop node's controller vibration (--ar-haptics=URL|off); see HAPTICS.md."
         echo "pull updates files only; run loads the updated native library."
         ;;
 esac

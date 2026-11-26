@@ -28,6 +28,7 @@
 #include "wireframe.h"
 #include "robot_ar_client.h"
 #include "body_tracking.h"
+#include "haptics.h"
 
 // XR_META_body_tracking_fidelity is in Meta's preview headers (meta_openxr_preview/
 // meta_body_tracking_fidelity.h), not in the Khronos 1.1.53 loader headers.
@@ -767,6 +768,12 @@ public:
             arPlacement_.yaw = arConfig_.yawDeg * teleop::pi / 180;
             arPlacement_.scale = arConfig_.scale;
         }
+        // Controller vibration from the teleop node (HAPTICS.md): its URL comes with the AR view's (`--ar`).
+        if (!arConfig_.hapticsUrl.empty()) {
+            hapticsEnabled_ = true;
+            hapticsClient_.start(arConfig_.hapticsUrl, &hapticsPlayer_);
+            LOGI("Haptics: %s", arConfig_.hapticsUrl.c_str());
+        }
         panel_.demoMode = demoEnabled_ ? (robot_.frozenMode ? "FROZEN" : "LIVE") : "";
         if ((demoEnabled_ || arEnabled_) && !demoRenderer_.init(instance_, systemId_, session_)) {
             LOGE("Kinematic demo renderer initialization failed");
@@ -794,6 +801,7 @@ public:
     }
 
     void shutdown() {
+        hapticsClient_.stop();
         arClient_.stop();
         sceneClient_.stop();
         sceneView_.shutdown();
@@ -925,6 +933,7 @@ public:
             1e9f / static_cast<float>(frameState.predictedDisplayPeriod) : 0;
         if (!finishing_) updateTelemetry(frameState.predictedDisplayTime);
         const bool focused = sessionState_ == XR_SESSION_STATE_FOCUSED;
+        if (hapticsEnabled_ && !finishing_) updateHaptics(focused);
         const int64_t now = monotonicNs();
         if (!finishing_ && focused && getBool(bButtonAction_)) {
             if (shutdownHeldSince_ == 0) shutdownHeldSince_ = now;
@@ -1006,6 +1015,37 @@ public:
     }
 
 private:
+    // Haptics: the player's commands for this frame -> the controllers. Unfocused, the runtime plays nothing: the
+    // commands are dropped (a level is re-applied every 50 ms, so it resumes on focus).
+    void updateHaptics(bool focused) {
+        const auto commands = hapticsPlayer_.tick(monotonicNs());
+        const std::string err = hapticsClient_.error();
+        if (err != hapticLoggedError_) {
+            LOGI("Haptics stream: %s", err.empty() ? "ok" : err.c_str());
+            hapticLoggedError_ = err;
+        }
+        if (!focused) return;
+        for (const auto& c : commands) {
+            XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+            info.action = hapticAction_;
+            info.subactionPath = c.hand == 0 ? leftHandPath_ : rightHandPath_;
+            XrResult r;
+            if (c.stop) {
+                r = xrStopHapticFeedback(session_, &info);
+            } else {
+                XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
+                v.amplitude = c.amplitude;
+                v.duration = static_cast<XrDuration>(c.durationNs);
+                v.frequency = c.frequencyHz > 0 ? c.frequencyHz : XR_FREQUENCY_UNSPECIFIED;
+                r = xrApplyHapticFeedback(session_, &info, reinterpret_cast<const XrHapticBaseHeader*>(&v));
+            }
+            if (r != hapticLoggedResult_) {          // log changes only: this runs every frame
+                if (XR_FAILED(r)) LOGW("Haptic feedback failed: %d", r);
+                hapticLoggedResult_ = r;
+            }
+        }
+    }
+
     // Robot AR: newest snapshot from the background client -> HUD lines and
     // world-space segments. Never blocks: the snapshot is a mutex-guarded copy.
     void updateRobotAr(bool render) {
@@ -1147,6 +1187,12 @@ private:
     XrAction bButtonAction_ = XR_NULL_HANDLE;
     XrAction xButtonAction_ = XR_NULL_HANDLE;
     XrAction yButtonAction_ = XR_NULL_HANDLE;
+    XrAction hapticAction_ = XR_NULL_HANDLE;   // vibration output, per hand (HAPTICS.md)
+    haptics::Player hapticsPlayer_;            // declared before the client: it outlives the client's thread
+    haptics::Client hapticsClient_;
+    bool hapticsEnabled_ = false;
+    XrResult hapticLoggedResult_ = XR_SUCCESS;
+    std::string hapticLoggedError_;
     XrSpace leftGripSpace_ = XR_NULL_HANDLE;
     XrSpace rightGripSpace_ = XR_NULL_HANDLE;
     std::vector<XrSpace> actionSpaces_;
@@ -1458,6 +1504,7 @@ private:
         bButtonAction_ = createAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", "B", nullptr, 0);
         xButtonAction_ = createAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", "X", nullptr, 0);
         yButtonAction_ = createAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y", nullptr, 0);
+        hapticAction_ = createAction(XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic", "Haptic", hands, 2);
 
         createActionSpaces();
         suggestBindings();
@@ -1528,6 +1575,8 @@ private:
         addBinding(b, yButtonAction_, "/user/hand/left/input/y/click");
         addBinding(b, aButtonAction_, "/user/hand/right/input/a/click");
         addBinding(b, bButtonAction_, "/user/hand/right/input/b/click");
+        addBinding(b, hapticAction_, "/user/hand/left/output/haptic");
+        addBinding(b, hapticAction_, "/user/hand/right/output/haptic");
 
         XrInteractionProfileSuggestedBinding suggested{
             XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -1866,6 +1915,7 @@ private:
             json << ",\"temperature_c\":" << jsonFixed(battery_.temperature_c, 1) << "}";
         }
         if (arEnabled_) appendRobotArJson(json, time);   // additive: older consumers ignore it
+        if (hapticsEnabled_) json << ",\"haptics\":" << hapticsPlayer_.blockJson();   // the ack (HAPTICS.md)
         // Body tracking (opt-in, BODY_TRACKING.md): additive, every `every`th record.
         if (bodyCfg_.enabled && (controllerFrameSeq_ - 1) % static_cast<uint64_t>(bodyCfg_.every) == 0)
             appendBodyJson(json, time);

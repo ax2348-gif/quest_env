@@ -303,6 +303,10 @@ static void testConfig() {
     assert(boxesFallback(fallback) && fallback == "http://erid:8080/nodes/description/model/tree?variant=simple");
     assert(!boxesFallback(fallback));
     assert(c.stateUrl == "http://erid:8080/nodes/sim/robot_state/stream?format=jsonl&hz=30");
+    assert(c.hapticsUrl == "http://erid:8080/nodes/quest_teleop/haptics?stream=1");
+    assert(parseConfig("url=http://a\nhaptics=off\n").hapticsUrl.empty());
+    assert(parseConfig("state=http://s/x\nhaptics=http://h/y\n").hapticsUrl == "http://h/y");
+    assert(parseConfig("state=http://s/x\n").hapticsUrl.empty());
     c = parseConfig("# x\nurl=http://a\nstate = http://robot:8200/robot_state/stream\nobjects=http://o/s\n"
                     "offset=0.5,-1,0.25\nyaw=90\nscale=0.5\n");
     assert(c.stateUrl == "http://robot:8200/robot_state/stream" && c.objectsUrl == "http://o/s");

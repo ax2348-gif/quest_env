@@ -20,6 +20,7 @@ qr --scheme=body-frozen --ar=http://HOST[:PORT]        # HOST = the robot fronte
 | Description | `<url>/nodes/description/model/tree?variant=boxes` (boxes as on the description page; falls back to `variant=simple`) | `--ar-model=URL` |
 | State stream | `<url>/nodes/sim/robot_state/stream?format=jsonl&hz=30` | `--ar-state=URL` |
 | Objects stream (optional) | objects inside the state lines | `--ar-objects=URL` |
+| Controller vibration ([HAPTICS.md](HAPTICS.md)) | `<url>/nodes/quest_teleop/haptics?stream=1` | `--ar-haptics=URL\|off` |
 
 The state URL is configurable so the same view works with the real robot's
 `robot_state.v1` source. `--ar-offset=X,Y,Z` (metres, in the placed frame),

@@ -858,6 +858,7 @@ struct Config {
     bool enabled = false;
     std::string modelUrl, stateUrl, objectsUrl;
     std::string sceneUrl; // rigid scene (robot_utils docs/scene3d.md): meshes drawn by scene_view.h when it answers
+    std::string hapticsUrl; // the teleop node's controller vibration stream (HAPTICS.md); played by haptics.h
     V offset;
     double yawDeg = 0, scale = 1;
 };
@@ -890,6 +891,8 @@ inline Config parseConfig(const std::string &text) {
             c.objectsUrl = v;
         else if (k == "scene")
             c.sceneUrl = v; // "off": none
+        else if (k == "haptics")
+            c.hapticsUrl = v; // "off": none
         else if (k == "yaw")
             c.yawDeg = std::strtod(v.c_str(), nullptr);
         else if (k == "scale") {
@@ -917,9 +920,13 @@ inline Config parseConfig(const std::string &text) {
             c.stateUrl = base + "/nodes/sim/robot_state/stream?format=jsonl&hz=30";
         if (c.sceneUrl.empty())
             c.sceneUrl = base + "/nodes/sim/scene3d"; // tried; a 404 keeps the description view
+        if (c.hapticsUrl.empty())
+            c.hapticsUrl = base + "/nodes/quest_teleop/haptics?stream=1"; // tried; a 404 retries slowly
     }
     if (c.sceneUrl == "off")
         c.sceneUrl.clear();
+    if (c.hapticsUrl == "off")
+        c.hapticsUrl.clear();
     if (!std::isfinite(c.yawDeg))
         c.yawDeg = 0;
     if (!std::isfinite(c.offset.x + c.offset.y + c.offset.z))
