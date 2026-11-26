@@ -11,7 +11,7 @@ computer reads that stream. The consumer is [robot_utils](https://github.com/ax2
 - **Location:** `~/workspace/quest_env` (`$HOME` is the runtime's private home). `~/.config/quest-env/root` names
   it; `shell/install-profile.sh` writes it, together with a `q` shortcut for interactive shells.
 - **How it arrives:**
-  - **robot_utils' setup wizard** (`tools/quest_teleop/quest_setup.py`) copies the tag `collab-v3` there, runs
+  - **robot_utils' setup wizard** (`tools/quest_teleop/quest_setup.py`) copies the tag `collab-v4` there, runs
     `sh quest install-devtools` (git, curl, wget from `packages/devtools`), then makes it a Git clone (HTTPS
     remote) tracking branch `collab` (the maintainer's: `main`, via `--quest-env-branch`). `quest pull`
     fast-forwards it, and robot_utils' quest_up does that when the clone is behind.

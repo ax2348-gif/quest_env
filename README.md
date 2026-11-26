@@ -13,7 +13,7 @@ The easy way is robot_utils' setup wizard. Plug the headset in over USB and run
 the following, and is safe to rerun:
 - installs Tailscale and the Quest developer runtime;
 - authorises an SSH key and adds `Host quest` to `~/.ssh/config`;
-- copies this repository (tag `collab-v3`) to `~/workspace/quest_env`, installs the developer tools it ships
+- copies this repository (tag `collab-v4`) to `~/workspace/quest_env`, installs the developer tools it ships
   (`packages/devtools`: git, curl, wget), turns the copy into a Git clone tracking branch `collab`, and installs
   its profile. `quest pull` then updates it.
 
